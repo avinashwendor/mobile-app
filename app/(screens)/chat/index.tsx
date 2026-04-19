@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../src/theme/ThemeProvider';
@@ -10,8 +11,9 @@ import { Colors, Typography, Spacing, Radii, HitSlop } from '../../../src/theme/
 import UserAvatar from '../../../src/components/UserAvatar';
 import * as chatApi from '../../../src/api/chat.api';
 import { useAuthStore } from '../../../src/stores/authStore';
-import { timeAgo, truncate } from '../../../src/utils/formatters';
+import { timeAgo } from '../../../src/utils/formatters';
 import type { Conversation } from '../../../src/api/chat.api';
+import { dedupeDmConversations } from '../../../src/utils/chatConversations';
 
 export default function ChatListScreen() {
   const router = useRouter();
@@ -22,18 +24,27 @@ export default function ChatListScreen() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchConversations = useCallback(async () => {
-    try {
-      const result = await chatApi.getConversations(1, 30);
-      setConversations(result.conversations);
-    } catch (err) {
-      console.error('Failed to load conversations:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchConversations().then(() => setIsLoading(false));
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      setIsLoading(true);
+      (async () => {
+        try {
+          const result = await chatApi.getConversations(1, 30);
+          if (!cancelled) {
+            setConversations(dedupeDmConversations(result.conversations, user?._id));
+          }
+        } catch (err) {
+          console.error('Failed to load conversations:', err);
+        } finally {
+          if (!cancelled) setIsLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [user?._id]),
+  );
 
   const renderConversation = useCallback(({ item }: { item: Conversation }) => {
     const otherUser = item.participants.find((p) => p._id !== user?._id);
@@ -69,7 +80,7 @@ export default function ChatListScreen() {
         </View>
       </Pressable>
     );
-  }, [user, colors]);
+  }, [user, colors, router]);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -85,6 +96,7 @@ export default function ChatListScreen() {
         <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
       ) : (
         <FlatList
+          style={{ flex: 1 }}
           data={conversations}
           renderItem={renderConversation}
           keyExtractor={(item) => item._id}

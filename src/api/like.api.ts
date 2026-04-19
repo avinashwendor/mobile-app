@@ -1,62 +1,52 @@
 import apiClient from './client';
-import { getDummyLikes } from '../data/dummyData';
+import { mapUser, type MobileUser } from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Like API — the backend exposes per-resource endpoints rather than a
+ * single `/likes` route, so we route to the correct URL based on
+ * `contentType`.
+ *
+ *   POST/DELETE /posts/:id/like
+ *   POST/DELETE /reels/:id/like
+ *   POST/DELETE /comments/:id/like
+ *   (stories have /stories/:id/react, handled separately in story.api.ts)
+ */
 
-export interface Like {
-  _id: string;
-  contentType: 'post' | 'reel' | 'comment' | 'story';
-  contentId: string;
-}
+export type LikeTarget = 'post' | 'reel' | 'comment';
 
-/* ───────── API Calls ───────── */
-
-/** POST /likes — like content */
-export async function likeContent(contentType: Like['contentType'], contentId: string): Promise<void> {
-  try {
-    await apiClient.post('/likes', { contentType, contentId });
-  } catch {
-    // Silently succeed offline — optimistic UI handles the state
+const routeFor = (type: LikeTarget, id: string): string => {
+  switch (type) {
+    case 'post': return `/posts/${id}/like`;
+    case 'reel': return `/reels/${id}/like`;
+    case 'comment': return `/comments/${id}/like`;
   }
-}
+};
 
-/** DELETE /likes — unlike content (uses request body, not params) */
-export async function unlikeContent(contentType: Like['contentType'], contentId: string): Promise<void> {
-  try {
-    await apiClient.delete('/likes', { data: { contentType, contentId } });
-  } catch {
-    // Silently succeed offline
+export async function likeContent(type: LikeTarget | 'story', id: string): Promise<void> {
+  if (type === 'story') {
+    await apiClient.post(`/stories/${id}/react`, { emoji: '❤️' });
+    return;
   }
+  await apiClient.post(routeFor(type, id), {});
 }
 
-/** GET /likes/check?contentType=&contentId= — check if current user liked */
-export async function checkLiked(
-  contentType: Like['contentType'],
-  contentId: string,
-): Promise<boolean> {
-  try {
-    const { data } = await apiClient.get('/likes/check', {
-      params: { contentType, contentId },
-    });
-    return data.data.isLiked;
-  } catch {
-    return false;
-  }
+export async function unlikeContent(type: LikeTarget | 'story', id: string): Promise<void> {
+  if (type === 'story') return; // backend has no "unreact"
+  await apiClient.delete(routeFor(type, id));
 }
 
-/** GET /likes/:contentType/:contentId?page=&limit= — get list of users who liked */
+/** GET /posts/:id/likes — list users who liked a post */
 export async function getLikes(
-  contentType: Like['contentType'],
-  contentId: string,
+  type: 'post',
+  id: string,
   page = 1,
   limit = 20,
-): Promise<{ likes: any[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/likes/${contentType}/${contentId}`, {
-      params: { page, limit },
-    });
-    return { likes: data.data.likes, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyLikes(contentType, contentId, page, limit);
-  }
+): Promise<{ likes: { user: MobileUser }[]; hasMore: boolean; cursor: string | null }> {
+  const { data } = await apiClient.get(`/posts/${id}/likes`, { params: { limit } });
+  const items: any[] = Array.isArray(data.data) ? data.data : [];
+  return {
+    likes: items.map((row) => ({ user: mapUser(row.user_id ?? row.user ?? row) })),
+    hasMore: Boolean(data.meta?.has_more),
+    cursor: data.meta?.cursor ?? null,
+  };
 }

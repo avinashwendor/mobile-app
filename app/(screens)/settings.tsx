@@ -54,16 +54,31 @@ export default function SettingsScreen() {
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Continue',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              const authApi = await import('../../src/api/auth.api');
-              await authApi.deactivateAccount();
-              await logout();
-            } catch (err: any) {
-              Alert.alert('Error', err?.response?.data?.message || 'Failed to delete account.');
-            }
+          onPress: () => {
+            Alert.prompt(
+              'Confirm Password',
+              'Enter your password to confirm account deactivation.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Deactivate',
+                  style: 'destructive',
+                  onPress: async (password?: string) => {
+                    if (!password) return;
+                    try {
+                      const authApi = await import('../../src/api/auth.api');
+                      await authApi.deactivateAccount(password);
+                      await logout();
+                    } catch (err: any) {
+                      Alert.alert('Error', err?.message || 'Failed to deactivate account.');
+                    }
+                  },
+                },
+              ],
+              'secure-text',
+            );
           },
         },
       ],

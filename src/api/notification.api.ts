@@ -1,68 +1,44 @@
 import apiClient from './client';
-import { getDummyNotifications } from '../data/dummyData';
+import { mapNotification, type MobileNotification } from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Notification API — backend mounts under `/notifications`.
+ * Unread count is served from a separate endpoint; we fetch it in parallel
+ * with the list for feed loads.
+ */
 
-export interface Notification {
-  _id: string;
-  sender: {
-    _id: string;
-    username: string;
-    fullName: string;
-    profilePicture: string;
-    isVerified: boolean;
-  };
-  type: string;
-  message: string;
-  contentType?: string;
-  contentId?: string;
-  isRead: boolean;
-  createdAt: string;
-}
+export type Notification = MobileNotification;
 
-/* ───────── API Calls ───────── */
+const pageState = new Map<string, string | null>();
 
-/** GET /notifications?page=&limit=&type= */
 export async function getNotifications(
   page = 1,
   limit = 20,
-  type?: string,
+  _type?: string,
 ): Promise<{ notifications: Notification[]; unreadCount: number; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/notifications', { params: { page, limit, type } });
-    return {
-      notifications: data.data.notifications,
-      unreadCount: data.data.unreadCount,
-      hasMore: data.data.pagination.hasMore,
-    };
-  } catch {
-    return getDummyNotifications(page, limit);
-  }
+  const cursor = page === 1 ? undefined : pageState.get('notifications') ?? undefined;
+  const [listRes, unreadRes] = await Promise.all([
+    apiClient.get('/notifications', { params: { cursor, limit } }),
+    apiClient.get('/notifications/unread-count').catch(() => null),
+  ]);
+  const items: any[] = Array.isArray(listRes.data.data) ? listRes.data.data : [];
+  pageState.set('notifications', listRes.data.meta?.cursor ?? null);
+
+  return {
+    notifications: items.map(mapNotification),
+    unreadCount: Number(unreadRes?.data?.data?.unread_count ?? 0),
+    hasMore: Boolean(listRes.data.meta?.has_more),
+  };
 }
 
-/** PUT /notifications/:notificationId/read */
 export async function markRead(notificationId: string): Promise<void> {
-  try {
-    await apiClient.put(`/notifications/${notificationId}/read`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.put(`/notifications/${notificationId}/read`);
 }
 
-/** PUT /notifications/read-all */
 export async function markAllRead(): Promise<void> {
-  try {
-    await apiClient.put('/notifications/read-all');
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.put('/notifications/read-all');
 }
 
-/** DELETE /notifications/:notificationId */
 export async function deleteNotification(notificationId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/notifications/${notificationId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/notifications/${notificationId}`);
 }

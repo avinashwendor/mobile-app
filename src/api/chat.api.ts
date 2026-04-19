@@ -1,126 +1,81 @@
 import apiClient from './client';
-import type { PostAuthor } from './post.api';
-import { getDummyConversations, getDummyMessages, DUMMY_CONVERSATIONS } from '../data/dummyData';
+import {
+  mapChatMessage,
+  mapConversation,
+  unwrap,
+  type MobileChatMessage,
+  type MobileConversation,
+  type MobileChatParticipant,
+} from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Chat API — conversations, messages, and read-receipts live under
+ * `/chat/conversations`. Messages are sent with a `content` wrapper
+ * object (text / shared_content / font preferences).
+ */
 
-export interface ChatParticipant {
-  _id: string;
-  username: string;
-  fullName: string;
-  profilePicture: string;
-  isVerified: boolean;
-  lastSeen?: string;
-}
+export type ChatParticipant = MobileChatParticipant;
+export type ChatMessage = MobileChatMessage;
+export type Conversation = MobileConversation;
 
-export interface ChatMessage {
-  _id: string;
-  sender: { _id: string; username: string; fullName: string; profilePicture: string };
-  content: {
-    text?: string;
-    media?: { type: 'image' | 'video'; url: string; filename: string };
-  };
-  messageType: 'text' | 'media' | 'system';
-  readBy: { user: string; readAt: string }[];
-  isDeleted: boolean;
-  createdAt: string;
-}
-
-export interface Conversation {
-  _id: string;
-  participants: ChatParticipant[];
-  isGroup: boolean;
-  groupName?: string;
-  lastMessage: ChatMessage | null;
-  lastActivity: string;
-  unreadCount: number;
-}
-
-/* ───────── API Calls ───────── */
-
-/** GET /chat/conversations?page=&limit= */
 export async function getConversations(
-  page = 1,
+  _page = 1,
   limit = 20,
 ): Promise<{ conversations: Conversation[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/chat/conversations', { params: { page, limit } });
-    return { conversations: data.data.conversations, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyConversations();
-  }
+  const { data } = await apiClient.get('/chat/conversations', { params: { limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    conversations: list.map(mapConversation),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** POST /chat/conversations — create or find existing 1-on-1 chat */
 export async function createConversation(
   participantIds: string[],
   isGroup = false,
   groupName?: string,
 ): Promise<Conversation> {
-  try {
-    const { data } = await apiClient.post('/chat/conversations', {
-      participants: participantIds,
-      isGroup,
-      groupName,
-    });
-    return data.data.conversation;
-  } catch {
-    return DUMMY_CONVERSATIONS[0];
-  }
+  const ids = participantIds.map((id) => String(id).trim()).filter(Boolean);
+  const res = await apiClient.post('/chat/conversations', {
+    type: isGroup ? 'group' : 'dm',
+    participant_ids: ids,
+    group_name: groupName,
+  });
+  return mapConversation(unwrap<any>(res));
 }
 
-/** GET /chat/conversations/:conversationId/messages?page=&limit= */
 export async function getMessages(
   conversationId: string,
-  page = 1,
+  _page = 1,
   limit = 50,
 ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/chat/conversations/${conversationId}/messages`, {
-      params: { page, limit },
-    });
-    return { messages: data.data.messages, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyMessages(conversationId);
-  }
+  const { data } = await apiClient.get(`/chat/conversations/${conversationId}/messages`, {
+    params: { limit },
+  });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    messages: list.map(mapChatMessage),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** POST /chat/conversations/:conversationId/messages — send message */
-export async function sendMessage(
-  conversationId: string,
-  text: string,
-): Promise<ChatMessage> {
-  try {
-    const { data } = await apiClient.post(`/chat/conversations/${conversationId}/messages`, { text });
-    return data.data.message;
-  } catch {
-    // Return optimistic message so offline sending appears to work
-    return {
-      _id: `msg_offline_${Date.now()}`,
-      sender: { _id: 'demo_user_001', username: 'alex.creates', fullName: 'Alex Morgan', profilePicture: '' },
-      content: { text },
-      messageType: 'text',
-      readBy: [],
-      isDeleted: false,
-      createdAt: new Date().toISOString(),
-    };
-  }
+export async function sendMessage(conversationId: string, text: string): Promise<ChatMessage> {
+  const res = await apiClient.post(`/chat/conversations/${conversationId}/messages`, {
+    type: 'text',
+    content: { text },
+  });
+  return mapChatMessage(unwrap<any>(res));
 }
 
-/** PUT /chat/conversations/:cid/messages/:mid/read — mark as read */
-export async function markMessageRead(conversationId: string, messageId: string): Promise<void> {
-  try {
-    await apiClient.put(`/chat/conversations/${conversationId}/messages/${messageId}/read`);
-  } catch {
-    // Silently succeed offline
-  }
+export async function markConversationRead(conversationId: string): Promise<void> {
+  await apiClient.post(`/chat/conversations/${conversationId}/read`, {});
 }
 
-/** DELETE /chat/conversations/:cid/messages/:mid */
+export async function markMessageRead(conversationId: string, _messageId: string): Promise<void> {
+  // Backend exposes per-conversation read, not per-message.
+  await markConversationRead(conversationId);
+}
+
 export async function deleteMessage(conversationId: string, messageId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/chat/conversations/${conversationId}/messages/${messageId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/chat/conversations/${conversationId}/messages/${messageId}`);
 }

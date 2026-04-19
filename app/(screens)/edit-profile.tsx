@@ -44,26 +44,24 @@ export default function EditProfileScreen() {
   const handleSave = useCallback(async () => {
     setIsSaving(true);
     try {
-      // Upload avatar if changed
-      let profilePicture = user?.profilePicture;
+      // Avatar is persisted server-side by uploadAvatar — the profile refetch
+      // below will pick up the new URL, so we don't pass it to updateProfile.
       if (avatarUri) {
-        profilePicture = await userApi.uploadAvatar(avatarUri);
+        await userApi.uploadAvatar(avatarUri);
       }
 
-      // Update profile
       const updated = await authApi.updateProfile({
         fullName: fullName.trim(),
         bio: bio.trim(),
         website: website.trim(),
         isPrivate,
-        profilePicture,
       });
 
       setUser(updated as any);
       Alert.alert('Success', 'Profile updated!');
       router.back();
     } catch (err: any) {
-      const msg = err?.response?.data?.message || 'Failed to update profile.';
+      const msg = err?.message || err?.response?.data?.message || 'Failed to update profile.';
       Alert.alert('Error', msg);
     } finally {
       setIsSaving(false);

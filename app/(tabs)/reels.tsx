@@ -3,7 +3,7 @@ import {
   View, Text, Pressable, StyleSheet, Dimensions,
   ActivityIndicator, FlatList,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -27,12 +27,15 @@ export default function ReelsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const params = useLocalSearchParams<{ startReelId?: string | string[] }>();
+  const startReelId = Array.isArray(params.startReelId) ? params.startReelId[0] : params.startReelId;
 
   const [reels, setReels] = useState<Reel[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<FlatList<Reel>>(null);
 
   const fetchReels = useCallback(async (pageNum: number, refresh = false) => {
     try {
@@ -56,9 +59,24 @@ export default function ReelsScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!startReelId || reels.length === 0) return;
+    const i = reels.findIndex((r) => r._id === startReelId);
+    if (i < 0) return;
+    setActiveIndex(i);
+    const t = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: i, animated: false });
+      } catch {
+        listRef.current?.scrollToOffset({ offset: i * SCREEN_HEIGHT, animated: false });
+      }
+    }, 120);
+    return () => clearTimeout(t);
+  }, [startReelId, reels]);
+
   const handleLoadMore = useCallback(() => {
-    if (hasMore) fetchReels(page + 1);
-  }, [hasMore, page]);
+    if (hasMore) void fetchReels(page + 1);
+  }, [hasMore, page, fetchReels]);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
@@ -85,6 +103,7 @@ export default function ReelsScreen() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={reels}
         renderItem={({ item, index }) => (
           <ReelItem reel={item} isActive={index === activeIndex} insets={insets} router={router} />
@@ -94,8 +113,16 @@ export default function ReelsScreen() {
         showsVerticalScrollIndicator={false}
         snapToInterval={SCREEN_HEIGHT}
         decelerationRate="fast"
+        getItemLayout={(_, index) => ({
+          length: SCREEN_HEIGHT,
+          offset: SCREEN_HEIGHT * index,
+          index,
+        })}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={{ itemVisiblePercentThreshold: 60 }}
+        onScrollToIndexFailed={({ index }) => {
+          listRef.current?.scrollToOffset({ offset: index * SCREEN_HEIGHT, animated: false });
+        }}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={2}
         ListEmptyComponent={
@@ -110,8 +137,18 @@ export default function ReelsScreen() {
 }
 
 function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: boolean; insets: any; router: any }) {
-  const [isLiked, setIsLiked] = useState(false);
+  const [isLiked, setIsLiked] = useState(Boolean(reel.isLiked));
   const [likeCount, setLikeCount] = useState(reel.likesCount);
+  const [videoReady, setVideoReady] = useState(false);
+
+  useEffect(() => {
+    setIsLiked(Boolean(reel.isLiked));
+    setLikeCount(reel.likesCount);
+  }, [reel._id, reel.isLiked, reel.likesCount]);
+
+  useEffect(() => {
+    if (!isActive) setVideoReady(false);
+  }, [isActive, reel._id]);
 
   const heartScale = useSharedValue(0);
   const heartOpacity = useSharedValue(0);
@@ -155,24 +192,47 @@ function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: bo
     }
   };
 
+  const videoUri = reel.video?.url;
+  const thumbUri = reel.video?.thumbnail || videoUri;
+
   return (
     <Pressable onPress={handleDoubleTap} style={[styles.reelContainer, { height: SCREEN_HEIGHT }]}>
-      {/* Video / thumbnail */}
-      {isActive && reel.video?.url ? (
-        <Video
-          source={{ uri: reel.video.url }}
-          style={styles.reelVideo}
-          resizeMode={ResizeMode.COVER}
-          shouldPlay={isActive}
-          isLooping
-          isMuted={false}
-        />
-      ) : (
+      {/* Thumbnail always anchors layout; video fades in when the first frame is ready (avoids black flash). */}
+      {!isActive || !videoUri ? (
         <Image
-          source={{ uri: reel.video?.thumbnail || reel.video?.url }}
+          source={{ uri: thumbUri || undefined }}
           style={styles.reelVideo}
           contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
         />
+      ) : (
+        <View style={styles.reelVideo}>
+          <Image
+            source={{ uri: thumbUri || undefined }}
+            style={[StyleSheet.absoluteFillObject, { opacity: videoReady ? 0 : 1 }]}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+          <Video
+            source={{ uri: videoUri }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: SCREEN_WIDTH,
+              height: SCREEN_HEIGHT,
+              opacity: videoReady ? 1 : 0,
+            }}
+            resizeMode={ResizeMode.COVER}
+            shouldPlay={isActive}
+            isLooping
+            isMuted={false}
+            useNativeControls={false}
+            onLoadStart={() => setVideoReady(false)}
+            onReadyForDisplay={() => setVideoReady(true)}
+          />
+        </View>
       )}
 
       {/* Double-tap heart */}

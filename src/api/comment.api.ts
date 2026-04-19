@@ -1,103 +1,81 @@
 import apiClient from './client';
-import type { PostAuthor } from './post.api';
-import { getDummyComments, getDummyCommentReplies } from '../data/dummyData';
+import { mapComment, unwrap, type MobileComment } from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Comment API — reads and writes are mounted under `/posts/:postId/comments`
+ * and `/reels/:reelId/comments`. Edits, deletes, replies, and like-toggle
+ * operations live under `/comments/:commentId`.
+ */
 
-export interface Comment {
-  _id: string;
-  author: PostAuthor;
-  content: string;
-  contentType: 'post' | 'reel';
-  contentId: string;
-  parentComment: string | null;
-  likesCount: number;
-  repliesCount: number;
-  isEdited: boolean;
-  isPinned: boolean;
-  createdAt: string;
-  replies?: Comment[];
+export type Comment = MobileComment;
+
+const collectionPathFor = (contentType: 'post' | 'reel', contentId: string): string => {
+  return contentType === 'post'
+    ? `/posts/${contentId}/comments`
+    : `/reels/${contentId}/comments`;
+};
+
+/** GET comments for a post or reel (cursor paginated). */
+export async function getComments(
+  contentType: 'post' | 'reel',
+  contentId: string,
+  _page = 1,
+  limit = 20,
+  _sort: 'newest' | 'oldest' | 'popular' = 'newest',
+): Promise<{ comments: Comment[]; hasMore: boolean }> {
+  const { data } = await apiClient.get(collectionPathFor(contentType, contentId), {
+    params: { limit },
+  });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    comments: list.map((c: any) =>
+      mapComment({ ...c, contentType, contentId }),
+    ),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/* ───────── API Calls ───────── */
-
-/** POST /comments — create a comment or reply */
+/** Create a top-level comment or threaded reply. */
 export async function createComment(payload: {
   content: string;
   contentType: 'post' | 'reel';
   contentId: string;
   parentComment?: string;
 }): Promise<Comment> {
-  try {
-    const { data } = await apiClient.post('/comments', payload);
-    return data.data.comment;
-  } catch {
-    // Return a fake comment so offline posting appears to work
-    return {
-      _id: `comment_offline_${Date.now()}`,
-      author: { _id: 'demo_user_001', username: 'alex.creates', fullName: 'Alex Morgan', profilePicture: '', isVerified: true },
-      content: payload.content,
-      contentType: payload.contentType,
-      contentId: payload.contentId,
-      parentComment: payload.parentComment || null,
-      likesCount: 0,
-      repliesCount: 0,
-      isEdited: false,
-      isPinned: false,
-      createdAt: new Date().toISOString(),
-    };
-  }
-}
-
-/** GET /comments/:contentType/:contentId?page=&limit=&sort= */
-export async function getComments(
-  contentType: 'post' | 'reel',
-  contentId: string,
-  page = 1,
-  limit = 20,
-  sort: 'newest' | 'oldest' | 'popular' = 'newest',
-): Promise<{ comments: Comment[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/comments/${contentType}/${contentId}`, {
-      params: { page, limit, sort },
+  if (payload.parentComment) {
+    const res = await apiClient.post(`/comments/${payload.parentComment}/reply`, {
+      text: payload.content,
     });
-    return { comments: data.data.comments, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyComments(contentType, contentId, page, limit);
+    return mapComment({ ...unwrap<any>(res), contentType: payload.contentType, contentId: payload.contentId });
   }
+
+  const res = await apiClient.post(collectionPathFor(payload.contentType, payload.contentId), {
+    text: payload.content,
+  });
+  return mapComment({ ...unwrap<any>(res), contentType: payload.contentType, contentId: payload.contentId });
 }
 
-/** GET /comments/:commentId/replies?page=&limit= */
+/** GET /comments/:commentId/replies */
 export async function getCommentReplies(
   commentId: string,
-  page = 1,
+  _page = 1,
   limit = 20,
 ): Promise<{ replies: Comment[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/comments/${commentId}/replies`, {
-      params: { page, limit },
-    });
-    return { replies: data.data.replies, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyCommentReplies(commentId);
-  }
+  const { data } = await apiClient.get(`/comments/${commentId}/replies`, { params: { limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    replies: list.map(mapComment),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** PUT /comments/:commentId — edit own comment */
+/** PUT /comments/:commentId */
 export async function editComment(commentId: string, content: string): Promise<Comment> {
-  try {
-    const { data } = await apiClient.put(`/comments/${commentId}`, { content });
-    return data.data.comment;
-  } catch {
-    return { _id: commentId, author: { _id: 'demo_user_001', username: 'alex.creates', fullName: 'Alex Morgan', profilePicture: '', isVerified: true }, content, contentType: 'post', contentId: '', parentComment: null, likesCount: 0, repliesCount: 0, isEdited: true, isPinned: false, createdAt: new Date().toISOString() };
-  }
+  const res = await apiClient.put(`/comments/${commentId}`, { text: content });
+  return mapComment(unwrap<any>(res));
 }
 
 /** DELETE /comments/:commentId */
 export async function deleteComment(commentId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/comments/${commentId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/comments/${commentId}`);
 }

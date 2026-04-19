@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { useState, useCallback, memo, useEffect } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Dimensions,
 } from 'react-native';
@@ -13,6 +13,7 @@ import { Colors, Typography, Spacing, Radii, HitSlop } from '../theme/tokens';
 import UserAvatar from './UserAvatar';
 import { timeAgo, compactNumber } from '../utils/formatters';
 import type { Post } from '../api/post.api';
+import { ApiError } from '../api/client';
 import * as likeApi from '../api/like.api';
 import * as postApi from '../api/post.api';
 
@@ -35,12 +36,22 @@ interface PostCardProps {
  */
 function PostCardComponent({
   post, onComment, onShare, onUserPress, onPostPress,
-  initialIsLiked = false, initialIsSaved = false,
+  initialIsLiked, initialIsSaved,
 }: PostCardProps) {
   const { colors } = useTheme();
-  const [isLiked, setIsLiked] = useState(initialIsLiked);
-  const [isSaved, setIsSaved] = useState(initialIsSaved);
+  const resolvedLiked = initialIsLiked !== undefined ? initialIsLiked : post.isLiked;
+  const resolvedSaved = initialIsSaved !== undefined ? initialIsSaved : post.isSaved;
+  const [isLiked, setIsLiked] = useState(resolvedLiked);
+  const [isSaved, setIsSaved] = useState(resolvedSaved);
   const [likeCount, setLikeCount] = useState(post.likesCount);
+
+  useEffect(() => {
+    setIsLiked(initialIsLiked !== undefined ? initialIsLiked : post.isLiked);
+  }, [initialIsLiked, post._id, post.isLiked]);
+
+  useEffect(() => {
+    setIsSaved(initialIsSaved !== undefined ? initialIsSaved : post.isSaved);
+  }, [initialIsSaved, post._id, post.isSaved]);
 
   const heartScale = useSharedValue(0);
   const heartOpacity = useSharedValue(0);
@@ -92,8 +103,15 @@ function PostCardComponent({
       } else {
         await likeApi.likeContent('post', post._id);
       }
-    } catch {
-      // Revert on error
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && !wasLiked) {
+        setIsLiked(true);
+        return;
+      }
+      if (e instanceof ApiError && e.status === 404 && wasLiked) {
+        setIsLiked(false);
+        return;
+      }
       setIsLiked(wasLiked);
       setLikeCount((prev) => (wasLiked ? prev + 1 : prev - 1));
     }
@@ -101,11 +119,20 @@ function PostCardComponent({
 
   const handleSave = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setIsSaved(!isSaved);
+    const wasSaved = isSaved;
+    setIsSaved(!wasSaved);
     try {
-      await postApi.toggleSavePost(post._id);
-    } catch {
-      setIsSaved(isSaved);
+      await postApi.toggleSavePost(post._id, wasSaved);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && !wasSaved) {
+        setIsSaved(true);
+        return;
+      }
+      if (e instanceof ApiError && e.status === 404 && wasSaved) {
+        setIsSaved(false);
+        return;
+      }
+      setIsSaved(wasSaved);
     }
   };
 

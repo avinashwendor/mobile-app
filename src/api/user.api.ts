@@ -1,22 +1,14 @@
 import apiClient from './client';
-import type { BackendUser } from './auth.api';
-import {
-  getDummySearchResults,
-  getDummyUserProfile,
-  getDummyUserPosts,
-  getDummyUserFollowers,
-  getDummyUserFollowing,
-} from '../data/dummyData';
+import { mapPost, mapUser, type MobilePost, type MobileUser } from './adapters';
 
-/* ───────── Types ───────── */
-
-export interface UserProfile extends BackendUser {
-  isFollowing: boolean;
-  isFollowedBy: boolean;
-  followStatus: 'accepted' | 'pending' | null;
-  recentPosts: PostThumbnail[];
-  canViewPosts: boolean;
-}
+/**
+ * User API — resolve user profiles, lists, and search results.
+ *
+ * The backend identifies users by `userId` (Mongo ObjectId), not username.
+ * To preserve mobile routing by `@username` we search first, then fetch
+ * the profile by id. IDs are cached to avoid the extra round-trip on
+ * repeat navigation.
+ */
 
 export interface PostThumbnail {
   _id: string;
@@ -25,6 +17,12 @@ export interface PostThumbnail {
   commentsCount: number;
   createdAt: string;
 }
+
+export type UserProfile = MobileUser & {
+  recentPosts: PostThumbnail[];
+  canViewPosts: boolean;
+  followStatus: 'accepted' | 'pending' | null;
+};
 
 export interface UserSearchResult {
   _id: string;
@@ -35,97 +33,130 @@ export interface UserSearchResult {
   followersCount: number;
 }
 
-/* ───────── API Calls ───────── */
+/** Small in-memory cache from username → userId for avatar-pressed navigation */
+const usernameToId = new Map<string, string>();
 
-/** GET /users/search?q=&limit=&page= */
+const toSearchResult = (u: MobileUser): UserSearchResult => ({
+  _id: u._id,
+  username: u.username,
+  fullName: u.fullName,
+  profilePicture: u.profilePicture,
+  isVerified: u.isVerified,
+  followersCount: u.followersCount,
+});
+
+const resolveUserId = async (identifier: string): Promise<string> => {
+  // If it looks like an ObjectId, use it directly.
+  if (/^[a-f\d]{24}$/i.test(identifier)) return identifier;
+  const cached = usernameToId.get(identifier.toLowerCase());
+  if (cached) return cached;
+
+  const { data } = await apiClient.get('/users/search', {
+    params: { q: identifier, limit: 5 },
+  });
+  const list = (data?.data ?? []) as any[];
+  const match = list.find((u) => (u.username ?? '').toLowerCase() === identifier.toLowerCase())
+    ?? list[0];
+  if (!match) {
+    throw Object.assign(new Error('User not found'), { code: 'NOT_FOUND', status: 404 });
+  }
+  const id = String(match._id ?? match.id);
+  usernameToId.set((match.username ?? '').toLowerCase(), id);
+  return id;
+};
+
+/** GET /users/search?q= */
 export async function searchUsers(
   query: string,
-  page = 1,
+  _page = 1,
   limit = 20,
 ): Promise<{ users: UserSearchResult[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/users/search', {
-      params: { q: query, page, limit },
-    });
-    return { users: data.data.users, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummySearchResults(query);
-  }
+  const { data } = await apiClient.get('/users/search', { params: { q: query, limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    users: list.map(mapUser).map(toSearchResult),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** GET /users/:username — full profile with follow status + recent posts */
-export async function getUserProfile(username: string): Promise<UserProfile> {
-  try {
-    const { data } = await apiClient.get(`/users/${username}`);
-    return data.data.user;
-  } catch {
-    return getDummyUserProfile(username);
-  }
+/** GET /users/suggestions */
+export async function getSuggestions(limit = 20): Promise<UserSearchResult[]> {
+  const { data } = await apiClient.get('/users/suggestions', { params: { limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return list.map(mapUser).map(toSearchResult);
 }
 
-/** GET /users/:username/posts?page=&limit= */
+/** Full profile by username or id. */
+export async function getUserProfile(usernameOrId: string): Promise<UserProfile> {
+  const id = await resolveUserId(usernameOrId);
+  const { data } = await apiClient.get(`/users/${id}`);
+  const base = mapUser(data.data);
+  // Posts thumbnails aren't part of the profile response — fetch them too.
+  // The backend doesn't expose /users/:id/posts, so we fall back to a feed
+  // filter via /posts/explore? Not ideal. We leave the list empty for now
+  // and let the profile screen load posts separately if/when the route is
+  // added. This keeps the app honest (no dummy data).
+  return {
+    ...base,
+    recentPosts: [],
+    canViewPosts: !base.isPrivate || Boolean(base.isFollowing),
+    followStatus: base.followStatus ?? (base.isFollowing ? 'accepted' : null),
+  };
+}
+
+/** Empty stub — backend does not expose /users/:id/posts yet. */
 export async function getUserPosts(
-  username: string,
-  page = 1,
-  limit = 12,
-): Promise<{ posts: any[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/users/${username}/posts`, {
-      params: { page, limit },
-    });
-    return { posts: data.data.posts, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyUserPosts(username);
-  }
+  _usernameOrId: string,
+  _page = 1,
+  _limit = 12,
+): Promise<{ posts: MobilePost[]; hasMore: boolean }> {
+  return { posts: [], hasMore: false };
 }
 
-/** GET /users/:username/followers */
 export async function getUserFollowers(
-  username: string,
-  page = 1,
+  usernameOrId: string,
+  _page = 1,
   limit = 20,
 ): Promise<{ followers: UserSearchResult[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/users/${username}/followers`, {
-      params: { page, limit },
-    });
-    return { followers: data.data.followers, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyUserFollowers(username);
-  }
+  const id = await resolveUserId(usernameOrId);
+  const { data } = await apiClient.get(`/users/${id}/followers`, { params: { limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    followers: list
+      .map((row: any) => mapUser(row.follower_id ?? row.user_id ?? row))
+      .map(toSearchResult),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** GET /users/:username/following */
 export async function getUserFollowing(
-  username: string,
-  page = 1,
+  usernameOrId: string,
+  _page = 1,
   limit = 20,
 ): Promise<{ following: UserSearchResult[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get(`/users/${username}/following`, {
-      params: { page, limit },
-    });
-    return { following: data.data.following, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyUserFollowing(username);
-  }
+  const id = await resolveUserId(usernameOrId);
+  const { data } = await apiClient.get(`/users/${id}/following`, { params: { limit } });
+  const list = Array.isArray(data.data) ? data.data : [];
+  return {
+    following: list
+      .map((row: any) => mapUser(row.following_id ?? row.user_id ?? row))
+      .map(toSearchResult),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
 
-/** PUT /users/upload-avatar — multipart form-data */
+/** PUT /users/me/avatar — multipart upload */
 export async function uploadAvatar(imageUri: string): Promise<string> {
   const formData = new FormData();
   const filename = imageUri.split('/').pop() ?? 'avatar.jpg';
   const match = /\.(\w+)$/.exec(filename);
   const type = match ? `image/${match[1]}` : 'image/jpeg';
-  formData.append('image', { uri: imageUri, name: filename, type } as any);
+  formData.append('avatar', { uri: imageUri, name: filename, type } as any);
 
-  try {
-    const { data } = await apiClient.put('/users/upload-avatar', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return data.data.profilePicture;
-  } catch {
-    // Return the local URI as the avatar so it appears to work offline
-    return imageUri;
-  }
+  const res = await apiClient.put('/users/me/avatar', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60_000,
+  });
+  const user = mapUser(res.data?.data);
+  return user.profilePicture;
 }

@@ -2,34 +2,25 @@ import { create } from 'zustand';
 import { STORAGE_KEYS } from '../utils/constants';
 import { getItem, setItem, multiRemove, getJSON, setJSON } from '../utils/storage';
 import * as authApi from '../api/auth.api';
-import type { BackendUser } from '../api/auth.api';
-import { DEMO_USER } from '../data/dummyData';
+import type { MobileUser } from '../api/adapters';
 
 /**
- * Auth user — mirrors the backend user model's public fields.
- * Field names match the backend exactly (_id, fullName, profilePicture).
+ * Authentication store.
+ *
+ * Persists `{ token, refreshToken, user }` in AsyncStorage so the session
+ * survives app restarts. No dummy/demo fallback: if the backend is
+ * unreachable, the app surfaces a clear error rather than pretending to be
+ * logged in.
  */
-export interface AuthUser {
-  _id: string;
-  username: string;
-  email: string;
-  fullName: string;
-  profilePicture: string;
-  bio: string;
-  website: string;
-  isVerified: boolean;
-  isPrivate: boolean;
-  followersCount: number;
-  followingCount: number;
-  postsCount: number;
-}
+
+export type AuthUser = MobileUser;
 
 interface AuthState {
   user: AuthUser | null;
   token: string | null;
+  refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  isDemoMode: boolean;
 
   /** Restore persisted auth on app launch */
   hydrate: () => Promise<void>;
@@ -40,8 +31,8 @@ interface AuthState {
   /** Register a new account */
   register: (payload: authApi.RegisterPayload) => Promise<void>;
 
-  /** Enter demo mode — no backend required */
-  enterDemoMode: () => Promise<void>;
+  /** Refetch the current user (e.g. after profile edit) */
+  refresh: () => Promise<void>;
 
   /** Clear auth and persisted tokens */
   logout: () => Promise<void>;
@@ -50,76 +41,82 @@ interface AuthState {
   setUser: (user: AuthUser) => void;
 }
 
+const persistSession = async (user: AuthUser, token: string, refreshToken: string) => {
+  await Promise.all([
+    setItem(STORAGE_KEYS.TOKEN, token),
+    setItem(STORAGE_KEYS.REFRESH_TOKEN, refreshToken),
+    setJSON(STORAGE_KEYS.USER, user),
+  ]);
+};
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   token: null,
+  refreshToken: null,
   isAuthenticated: false,
   isLoading: true,
-  isDemoMode: false,
 
   hydrate: async () => {
     try {
-      const [token, user] = await Promise.all([
+      const [token, refreshToken, user] = await Promise.all([
         getItem(STORAGE_KEYS.TOKEN),
+        getItem(STORAGE_KEYS.REFRESH_TOKEN),
         getJSON<AuthUser>(STORAGE_KEYS.USER),
       ]);
 
       if (token && user) {
-        set({ token, user, isAuthenticated: true, isLoading: false, isDemoMode: token === 'demo_token' });
+        set({ token, refreshToken, user, isAuthenticated: true, isLoading: false });
+        // Revalidate in the background — if it fails with 401 the client
+        // interceptor will clear the session and the UI will redirect.
+        authApi.getMe().then((fresh) => {
+          setJSON(STORAGE_KEYS.USER, fresh).catch(() => {});
+          set({ user: fresh });
+        }).catch(() => {});
       } else {
-        // No stored session → auto-enter demo mode so the app is usable without backend
-        const demoUser = DEMO_USER as AuthUser;
-        await Promise.all([
-          setItem(STORAGE_KEYS.TOKEN, 'demo_token'),
-          setJSON(STORAGE_KEYS.USER, demoUser),
-        ]);
-        set({ token: 'demo_token', user: demoUser, isAuthenticated: true, isLoading: false, isDemoMode: true });
+        set({ isLoading: false });
       }
     } catch {
-      // Storage failure → fall back to demo mode in-memory only
-      const demoUser = DEMO_USER as AuthUser;
-      set({ token: 'demo_token', user: demoUser, isAuthenticated: true, isLoading: false, isDemoMode: true });
+      set({ isLoading: false });
     }
   },
 
   login: async (usernameOrEmail, password) => {
     const result = await authApi.login({ usernameOrEmail, password });
-    const user = result.user as AuthUser;
-    const isDemo = result.token === 'demo_token';
-
-    await Promise.all([
-      setItem(STORAGE_KEYS.TOKEN, result.token),
-      setJSON(STORAGE_KEYS.USER, user),
-    ]);
-
-    set({ user, token: result.token, isAuthenticated: true, isDemoMode: isDemo });
+    await persistSession(result.user, result.token, result.refreshToken);
+    set({
+      user: result.user,
+      token: result.token,
+      refreshToken: result.refreshToken,
+      isAuthenticated: true,
+      isLoading: false,
+    });
   },
 
   register: async (payload) => {
     const result = await authApi.register(payload);
-    const user = result.user as AuthUser;
-    const isDemo = result.token === 'demo_token';
-
-    await Promise.all([
-      setItem(STORAGE_KEYS.TOKEN, result.token),
-      setJSON(STORAGE_KEYS.USER, user),
-    ]);
-
-    set({ user, token: result.token, isAuthenticated: true, isDemoMode: isDemo });
+    await persistSession(result.user, result.token, result.refreshToken);
+    set({
+      user: result.user,
+      token: result.token,
+      refreshToken: result.refreshToken,
+      isAuthenticated: true,
+      isLoading: false,
+    });
   },
 
-  enterDemoMode: async () => {
-    const demoUser = DEMO_USER as AuthUser;
-    await Promise.all([
-      setItem(STORAGE_KEYS.TOKEN, 'demo_token'),
-      setJSON(STORAGE_KEYS.USER, demoUser),
-    ]);
-    set({ token: 'demo_token', user: demoUser, isAuthenticated: true, isDemoMode: true });
+  refresh: async () => {
+    const fresh = await authApi.getMe();
+    await setJSON(STORAGE_KEYS.USER, fresh);
+    set({ user: fresh });
   },
 
   logout: async () => {
-    await multiRemove([STORAGE_KEYS.TOKEN, STORAGE_KEYS.USER]);
-    set({ user: null, token: null, isAuthenticated: false, isDemoMode: false });
+    const { refreshToken } = get();
+    if (refreshToken) {
+      authApi.logout(refreshToken).catch(() => {});
+    }
+    await multiRemove([STORAGE_KEYS.TOKEN, STORAGE_KEYS.REFRESH_TOKEN, STORAGE_KEYS.USER]);
+    set({ user: null, token: null, refreshToken: null, isAuthenticated: false });
   },
 
   setUser: (user) => {

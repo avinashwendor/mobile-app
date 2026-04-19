@@ -9,7 +9,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii } from '../theme/tokens';
 import UserAvatar from './UserAvatar';
-import { AUTHORS } from '../data/dummyData';
+import * as userApi from '../api/user.api';
+import * as postApi from '../api/post.api';
+import * as reelApi from '../api/reel.api';
+import * as chatApi from '../api/chat.api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -20,8 +23,6 @@ interface ShareSheetProps {
   contentId?: string;
   message?: string;
 }
-
-const QUICK_SHARE_USERS = AUTHORS.slice(0, 8);
 
 const SHARE_ACTIONS = [
   { icon: 'paper-plane-outline' as const, label: 'Send as Message', key: 'message' },
@@ -40,24 +41,62 @@ const MORE_ACTIONS = [
 export default function ShareSheet({ visible, onClose, contentType = 'post', contentId, message }: ShareSheetProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const [quickShareUsers, setQuickShareUsers] = React.useState<userApi.UserSearchResult[]>([]);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    userApi.getSuggestions(8)
+      .then((users) => { if (!cancelled) setQuickShareUsers(users); })
+      .catch(() => { if (!cancelled) setQuickShareUsers([]); });
+    return () => { cancelled = true; };
+  }, [visible]);
 
   const handleAction = useCallback(async (key: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    switch (key) {
-      case 'share':
-        await Share.share({ message: message || `Check out this ${contentType}!` });
-        break;
-      case 'copy':
-        // In a real app: Clipboard.setString(...)
-        break;
+    try {
+      switch (key) {
+        case 'share':
+          await Share.share({ message: message || `Check out this ${contentType}!` });
+          if (contentType === 'post' && contentId) {
+            await postApi.sharePost(contentId, 'external', { platform: 'system' });
+          }
+          break;
+        case 'copy':
+          if (contentType === 'post' && contentId) {
+            await postApi.sharePost(contentId, 'copy_link');
+          }
+          break;
+        case 'save':
+          if (contentType === 'post' && contentId) {
+            await postApi.toggleSavePost(contentId, false);
+          } else if (contentType === 'reel' && contentId) {
+            await reelApi.saveReel(contentId);
+          }
+          break;
+        default:
+          break;
+      }
+    } catch (err) {
+      console.warn('[ShareSheet] action failed:', err);
     }
     onClose();
-  }, [contentType, message, onClose]);
+  }, [contentType, contentId, message, onClose]);
 
-  const handleSendTo = useCallback((username: string) => {
+  const handleSendTo = useCallback(async (user: userApi.UserSearchResult) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      if (contentType === 'post' && contentId) {
+        await postApi.sharePost(contentId, 'dm', { recipientId: user._id });
+      } else {
+        const conv = await chatApi.createConversation([user._id], false);
+        await chatApi.sendMessage(conv._id, message || `Check out this ${contentType}!`);
+      }
+    } catch (err) {
+      console.warn('[ShareSheet] send-to failed:', err);
+    }
     onClose();
-  }, [onClose]);
+  }, [contentType, contentId, message, onClose]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -70,12 +109,20 @@ export default function ShareSheet({ visible, onClose, contentType = 'post', con
 
           {/* Quick send to users */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.usersRow}>
-            {QUICK_SHARE_USERS.map((u) => (
-              <Pressable key={u._id} style={styles.userItem} onPress={() => handleSendTo(u.username)}>
-                <UserAvatar uri={u.profilePicture} size="md" />
-                <Text style={[styles.userName, { color: colors.textSecondary }]} numberOfLines={1}>{u.username.split('.')[0]}</Text>
-              </Pressable>
-            ))}
+            {quickShareUsers.length === 0 ? (
+              <Text style={[styles.userName, { color: colors.textTertiary, paddingVertical: Spacing.md }]}>
+                No suggestions yet
+              </Text>
+            ) : (
+              quickShareUsers.map((u) => (
+                <Pressable key={u._id} style={styles.userItem} onPress={() => handleSendTo(u)}>
+                  <UserAvatar uri={u.profilePicture} size="md" />
+                  <Text style={[styles.userName, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {u.username.split('.')[0]}
+                  </Text>
+                </Pressable>
+              ))
+            )}
           </ScrollView>
 
           {/* Share actions */}

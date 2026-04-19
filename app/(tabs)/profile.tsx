@@ -17,6 +17,7 @@ import { useAuthStore } from '../../src/stores/authStore';
 import * as authApi from '../../src/api/auth.api';
 import * as userApi from '../../src/api/user.api';
 import * as postApi from '../../src/api/post.api';
+import type { SavedFeedItem } from '../../src/api/post.api';
 import { compactNumber } from '../../src/utils/formatters';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -35,7 +36,7 @@ export default function ProfileScreen() {
 
   const [profile, setProfile] = useState(authUser);
   const [posts, setPosts] = useState<any[]>([]);
-  const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [savedItems, setSavedItems] = useState<SavedFeedItem[]>([]);
   const [activeTab, setActiveTab] = useState<ProfileTab>('posts');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -58,7 +59,7 @@ export default function ProfileScreen() {
   const fetchSaved = useCallback(async () => {
     try {
       const result = await postApi.getSavedPosts(1, 30);
-      setSavedPosts(result.posts);
+      setSavedItems(result.items);
     } catch (err) {
       console.error('Failed to load saved posts:', err);
     }
@@ -72,10 +73,10 @@ export default function ProfileScreen() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'saved' && savedPosts.length === 0) {
+    if (activeTab === 'saved' && savedItems.length === 0) {
       fetchSaved();
     }
-  }, [activeTab]);
+  }, [activeTab, savedItems.length, fetchSaved]);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -84,7 +85,7 @@ export default function ProfileScreen() {
     setIsRefreshing(false);
   }, [activeTab]);
 
-  const currentPosts = activeTab === 'posts' ? posts : savedPosts;
+  const currentPosts = activeTab === 'posts' ? posts : savedItems;
 
   if (isLoading) {
     return (
@@ -198,28 +199,68 @@ export default function ProfileScreen() {
           </View>
         ) : (
           <View style={styles.gridContainer}>
-            {currentPosts.map((post, index) => {
-              const isLastInRow = (index + 1) % GRID_COL === 0;
-              return (
-                <Pressable
-                  key={post._id}
-                  style={[styles.gridItem, !isLastInRow && { marginRight: GRID_GAP }]}
-                  onPress={() => router.push({ pathname: '/(screens)/post/[id]', params: { id: post._id } })}
-                >
-                  <Image
-                    source={{ uri: post.media?.[0]?.thumbnail || post.media?.[0]?.url }}
-                    style={styles.gridImage}
-                    contentFit="cover"
-                    transition={200}
-                  />
-                  {post.media?.length > 1 && (
-                    <View style={styles.multiIndicator}>
-                      <Ionicons name="copy-outline" size={12} color={Colors.white} />
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
+            {activeTab === 'posts'
+              ? posts.map((post: any, index: number) => {
+                const isLastInRow = (index + 1) % GRID_COL === 0;
+                return (
+                  <Pressable
+                    key={post._id}
+                    style={[styles.gridItem, !isLastInRow && { marginRight: GRID_GAP }]}
+                    onPress={() => router.push({ pathname: '/(screens)/post/[id]', params: { id: post._id } })}
+                  >
+                    <Image
+                      source={{ uri: post.media?.[0]?.thumbnail || post.media?.[0]?.url }}
+                      style={styles.gridImage}
+                      contentFit="cover"
+                      transition={200}
+                      cachePolicy="memory-disk"
+                    />
+                    {post.media?.length > 1 && (
+                      <View style={styles.multiIndicator}>
+                        <Ionicons name="copy-outline" size={12} color={Colors.white} />
+                      </View>
+                    )}
+                  </Pressable>
+                );
+              })
+              : savedItems.map((item, index) => {
+                const isLastInRow = (index + 1) % GRID_COL === 0;
+                const thumb = item.kind === 'post'
+                  ? (item.post.media?.[0]?.thumbnail || item.post.media?.[0]?.url)
+                  : (item.reel.video?.thumbnail || item.reel.video?.url);
+                const multi = item.kind === 'post' && (item.post.media?.length ?? 0) > 1;
+                return (
+                  <Pressable
+                    key={item.saveId}
+                    style={[styles.gridItem, !isLastInRow && { marginRight: GRID_GAP }]}
+                    onPress={() => {
+                      if (item.kind === 'post') {
+                        router.push({ pathname: '/(screens)/post/[id]', params: { id: item.post._id } });
+                      } else {
+                        router.push({ pathname: '/(tabs)/reels', params: { startReelId: item.reel._id } });
+                      }
+                    }}
+                  >
+                    <Image
+                      source={{ uri: thumb || '' }}
+                      style={styles.gridImage}
+                      contentFit="cover"
+                      transition={200}
+                      cachePolicy="memory-disk"
+                    />
+                    {item.kind === 'reel' ? (
+                      <View style={styles.multiIndicator}>
+                        <Ionicons name="film-outline" size={12} color={Colors.white} />
+                      </View>
+                    ) : null}
+                    {multi ? (
+                      <View style={[styles.multiIndicator, { right: 4, left: undefined }]}>
+                        <Ionicons name="copy-outline" size={12} color={Colors.white} />
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
           </View>
         )}
       </View>

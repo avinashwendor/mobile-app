@@ -1,13 +1,35 @@
+import Constants from 'expo-constants';
+
 /**
- * App-wide constants — must stay in sync with the backend at
- * /Users/apple/Desktop/insta-project/backend
+ * App-wide constants kept in sync with the INSTAYT backend.
+ *
+ * The backend serves its API under `/api/v1` on port 3000 and exposes a
+ * Socket.IO endpoint on the same host. In development we derive the host
+ * automatically from the Expo bundler so the app works on simulators and
+ * real devices on the same LAN without any manual IP changes.
  */
 
-/** Backend runs on port 3000, routes are under /api (no /v1 prefix) */
-export const API_BASE_URL = 'http://localhost:3000/api';
+const DEFAULT_DEV_PORT = 3000;
 
-/** WebSocket endpoint for real-time events */
-export const WS_URL = 'http://localhost:3000';
+const resolveDevHost = (): string => {
+  const hostUri =
+    Constants.expoConfig?.hostUri ??
+    (Constants as any).expoGoConfig?.debuggerHost ??
+    (Constants as any).manifest?.debuggerHost;
+  if (hostUri) {
+    const host = hostUri.split(':')[0];
+    if (host && host !== '127.0.0.1') return host;
+  }
+  return 'localhost';
+};
+
+const host = resolveDevHost();
+
+/** Base URL for REST requests — mounts under `/api/v1` on the backend */
+export const API_BASE_URL = `http://${host}:${DEFAULT_DEV_PORT}/api/v1`;
+
+/** WebSocket endpoint served by the same HTTP server (Socket.IO) */
+export const WS_URL = `http://${host}:${DEFAULT_DEV_PORT}`;
 
 export const NOTIFICATION_TYPES = {
   LIKE: 'like',
@@ -22,6 +44,7 @@ export const NOTIFICATION_TYPES = {
 /** Keys for AsyncStorage persistence */
 export const STORAGE_KEYS = {
   TOKEN: '@instayt/token',
+  REFRESH_TOKEN: '@instayt/refresh_token',
   USER: '@instayt/user',
   THEME_MODE: '@instayt/theme_mode',
 } as const;

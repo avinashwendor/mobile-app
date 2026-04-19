@@ -1,23 +1,28 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../../src/theme/tokens';
 import UserAvatar from '../../../src/components/UserAvatar';
 import * as chatApi from '../../../src/api/chat.api';
+import { mapChatMessage } from '../../../src/api/adapters';
 import { useAuthStore } from '../../../src/stores/authStore';
 import { socketService } from '../../../src/services/socketService';
 import { formatMessageTime } from '../../../src/utils/formatters';
 import type { ChatMessage } from '../../../src/api/chat.api';
 
 export default function ChatThreadScreen() {
-  const { convId } = useLocalSearchParams<{ convId: string }>();
+  const params = useLocalSearchParams<{ convId?: string | string[] }>();
+  const convId = useMemo(() => {
+    const raw = params.convId;
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    return v ? String(v).trim() : '';
+  }, [params.convId]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -55,25 +60,33 @@ export default function ChatThreadScreen() {
   useEffect(() => {
     if (!convId) return;
 
-    fetchMessages(1, true).then(() => setIsLoading(false));
+    fetchMessages(1, true).then(() => {
+      setIsLoading(false);
+      chatApi.markConversationRead(convId).catch(() => {});
+    });
 
     // Join the conversation room for real-time updates
     socketService.joinConversation(convId);
 
-    const unsubNewMsg = socketService.on('new_message', (msg: ChatMessage) => {
-      if (msg.sender?._id !== user?._id) {
-        setMessages((prev) => [...prev, msg]);
+    const unsubNewMsg = socketService.on('new_message', (payload: any) => {
+      const raw = payload?.message ?? payload;
+      if (!raw?._id && !raw?.id) return;
+      const payloadConv = String(payload?.conversation_id ?? raw?.conversation_id ?? '');
+      if (payloadConv && payloadConv !== convId) return;
+      const msg = mapChatMessage(raw) as ChatMessage;
+      if (String(msg.sender?._id ?? '') !== String(user?._id ?? '')) {
+        setMessages((prev) => (prev.some((m) => m._id === msg._id) ? prev : [...prev, msg]));
       }
     });
 
     const unsubTyping = socketService.on('user_typing', (data: any) => {
-      if (data.conversation_id === convId && data.user_id !== user?._id) {
+      if (String(data.conversation_id) === convId && data.user_id !== user?._id) {
         setTypingUser(data.username);
       }
     });
 
     const unsubStopTyping = socketService.on('user_stopped_typing', (data: any) => {
-      if (data.conversation_id === convId) {
+      if (String(data.conversation_id) === convId) {
         setTypingUser(null);
       }
     });
@@ -84,7 +97,7 @@ export default function ChatThreadScreen() {
       unsubTyping();
       unsubStopTyping();
     };
-  }, [convId]);
+  }, [convId, fetchMessages, user?._id]);
 
   const handleTyping = useCallback((text: string) => {
     setNewMessage(text);
@@ -100,14 +113,15 @@ export default function ChatThreadScreen() {
   }, [isTyping, convId]);
 
   const handleSend = useCallback(async () => {
-    if (!newMessage.trim() || isSending || !convId) return;
+    const text = newMessage.trim();
+    if (!text || isSending || !convId) return;
     setIsSending(true);
 
-    // Optimistic message
+    // Optimistic message (capture text before clearing the input)
     const tempMsg: ChatMessage = {
       _id: `temp-${Date.now()}`,
       sender: user as any,
-      content: { text: newMessage.trim() },
+      content: { text },
       messageType: 'text',
       createdAt: new Date().toISOString(),
       readBy: [],
@@ -122,13 +136,15 @@ export default function ChatThreadScreen() {
     }
 
     try {
-      const realMsg = await chatApi.sendMessage(convId, newMessage.trim());
+      const realMsg = await chatApi.sendMessage(convId, text);
       setMessages((prev) =>
         prev.map((m) => (m._id === tempMsg._id ? realMsg : m)),
       );
-    } catch (err) {
+    } catch (err: any) {
       // Remove optimistic message on error
       setMessages((prev) => prev.filter((m) => m._id !== tempMsg._id));
+      const msg = err?.message || 'Could not send. Check your connection and try again.';
+      Alert.alert('Message not sent', msg);
       console.error('Failed to send message:', err);
     } finally {
       setIsSending(false);
@@ -136,7 +152,7 @@ export default function ChatThreadScreen() {
   }, [newMessage, isSending, convId, user, isTyping]);
 
   const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
-    const isMine = item.sender?._id === user?._id;
+    const isMine = String(item.sender?._id ?? '') === String(user?._id ?? '');
     const isTemp = item._id.startsWith('temp-');
 
     return (
@@ -168,8 +184,8 @@ export default function ChatThreadScreen() {
             {formatMessageTime(item.createdAt)}
           </Text>
           {isMine && !isTemp && (
-            <Text style={[styles.readReceipt, { color: (item.readBy?.length ?? 0) > 1 ? Colors.accent : colors.textTertiary }]}>
-              {(item.readBy?.length ?? 0) > 1 ? '✓✓' : '✓'}
+            <Text style={[styles.readReceipt, { color: (item.readBy?.length ?? 0) > 0 ? Colors.accent : colors.textTertiary }]}>
+              {(item.readBy?.length ?? 0) > 0 ? '✓✓' : '✓'}
             </Text>
           )}
         </View>
@@ -195,33 +211,40 @@ export default function ChatThreadScreen() {
         <Pressable><Ionicons name="call-outline" size={22} color={colors.text} /></Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
-      ) : (
-        <FlatList
-          ref={flatListRef}
-          data={messages}
-          renderItem={renderMessage}
-          keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.messageList}
-          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <View style={styles.emptyIcon}>
-                <Ionicons name="chatbubble-ellipses-outline" size={40} color={Colors.primary} />
+      <View style={styles.body}>
+        {isLoading ? (
+          <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
+        ) : (
+          <FlatList
+            ref={flatListRef}
+            style={styles.messageListFlex}
+            data={messages}
+            renderItem={renderMessage}
+            keyExtractor={(item) => item._id}
+            contentContainerStyle={styles.messageList}
+            keyboardShouldPersistTaps="handled"
+            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: false })}
+            onLayout={() => flatListRef.current?.scrollToEnd({ animated: false })}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={40} color={Colors.primary} />
+                </View>
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>Say hello! 👋</Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  Start the conversation with a message
+                </Text>
               </View>
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>Say hello! 👋</Text>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                Start the conversation with a message
-              </Text>
-            </View>
-          }
-        />
-      )}
+            }
+          />
+        )}
+      </View>
 
       {/* Input */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
+      >
         <View style={[styles.inputBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + Spacing.sm }]}>
           <Pressable style={styles.attachBtn}>
             <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
@@ -234,6 +257,9 @@ export default function ChatThreadScreen() {
             style={[styles.input, { color: colors.text, backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
             multiline
             maxLength={2000}
+            editable={Boolean(convId)}
+            returnKeyType="default"
+            blurOnSubmit={false}
           />
           {newMessage.trim() ? (
             <Pressable onPress={handleSend} disabled={isSending} style={[styles.sendBtn, { backgroundColor: Colors.primary }]}>
@@ -252,6 +278,8 @@ export default function ChatThreadScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
+  body: { flex: 1 },
+  messageListFlex: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.base, paddingBottom: Spacing.md, borderBottomWidth: 0.5 },
   headerCenter: { alignItems: 'center' },

@@ -7,33 +7,19 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../src/theme/tokens';
 import apiClient from '../../src/api/client';
-import { getDummySavedItems, getDummyCollections } from '../../src/data/dummyData';
+import * as postApi from '../../src/api/post.api';
+import type { SavedFeedItem } from '../../src/api/post.api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const GRID_GAP = 2;
 const GRID_COL = 3;
 const TILE_SIZE = (SCREEN_WIDTH - GRID_GAP * (GRID_COL - 1)) / GRID_COL;
 
-interface SavedPost {
-  _id: string;
-  post: {
-    _id: string;
-    media: { url: string; thumbnail?: string; type: string }[];
-    likesCount: number;
-    commentsCount: number;
-  };
-  collection?: string;
-  createdAt: string;
-}
-
-interface Collection {
-  _id: string;
+interface CollectionTile {
   name: string;
-  coverImage?: string;
   count: number;
 }
 
@@ -45,67 +31,94 @@ export default function SavedScreen() {
   const { colors } = useTheme();
 
   const [mode, setMode] = useState<ViewMode>('all');
-  const [savedPosts, setSavedPosts] = useState<SavedPost[]>([]);
-  const [collections, setCollections] = useState<Collection[]>([]);
+  const [savedItems, setSavedItems] = useState<SavedFeedItem[]>([]);
+  const [collections, setCollections] = useState<CollectionTile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [postsError, setPostsError] = useState<string | null>(null);
+  const [collectionsError, setCollectionsError] = useState<string | null>(null);
 
   const fetchSaved = useCallback(async () => {
     try {
-      const { data } = await apiClient.get('/saved', { params: { page: 1, limit: 60 } });
-      setSavedPosts(data.data.savedItems || []);
-    } catch (err) {
-      setSavedPosts(getDummySavedItems() as any);
+      const { items } = await postApi.getSavedPosts(1, 60);
+      setSavedItems(items);
+      setPostsError(null);
+    } catch {
+      setSavedItems([]);
+      setPostsError('Saved posts are unavailable right now.');
     }
   }, []);
 
   const fetchCollections = useCallback(async () => {
     try {
-      const { data } = await apiClient.get('/saved/collections');
-      setCollections(data.data.collections || []);
-    } catch (err) {
-      setCollections(getDummyCollections().collections);
+      const { data } = await apiClient.get<{ success: boolean; data: { name: string; count: number }[] }>('/saved/collections');
+      const rows = Array.isArray(data.data) ? data.data : [];
+      setCollections(rows.map((r) => ({ name: r.name, count: Number(r.count ?? 0) })));
+      setCollectionsError(null);
+    } catch {
+      setCollections([]);
+      setCollectionsError('Collections are unavailable right now.');
     }
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchSaved(), fetchCollections()]).then(() => setIsLoading(false));
-  }, []);
+    Promise.all([fetchSaved(), fetchCollections()]).finally(() => setIsLoading(false));
+  }, [fetchSaved, fetchCollections]);
 
-  const renderGridItem = useCallback(({ item }: { item: SavedPost }) => {
-    const post = item.post;
-    if (!post) return null;
-    const isVideo = post.media?.[0]?.type === 'video';
+  const renderGridItem = useCallback(({ item }: { item: SavedFeedItem }) => {
+    if (item.kind === 'post') {
+      const first = item.post.media?.[0];
+      if (!first) return null;
+      const isVideo = first.type === 'video';
+      return (
+        <Pressable
+          style={styles.gridItem}
+          onPress={() => router.push({ pathname: '/(screens)/post/[id]', params: { id: item.post._id } })}
+        >
+          <Image
+            source={{ uri: first.thumbnail || first.url }}
+            style={styles.gridImage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            priority="normal"
+            transition={150}
+          />
+          {isVideo && (
+            <View style={styles.videoIcon}>
+              <Ionicons name="play" size={14} color={Colors.white} />
+            </View>
+          )}
+        </Pressable>
+      );
+    }
+    const thumb = item.reel.video?.thumbnail || item.reel.video?.url;
+    if (!thumb) return null;
     return (
       <Pressable
         style={styles.gridItem}
-        onPress={() => router.push({ pathname: '/(screens)/post/[id]', params: { id: post._id } })}
+        onPress={() => router.push({ pathname: '/(tabs)/reels', params: { startReelId: item.reel._id } })}
       >
         <Image
-          source={{ uri: post.media?.[0]?.thumbnail || post.media?.[0]?.url }}
+          source={{ uri: thumb }}
           style={styles.gridImage}
           contentFit="cover"
+          cachePolicy="memory-disk"
+          transition={150}
         />
-        {isVideo && (
-          <View style={styles.videoIcon}>
-            <Ionicons name="play" size={14} color={Colors.white} />
-          </View>
-        )}
+        <View style={styles.videoIcon}>
+          <Ionicons name="film" size={14} color={Colors.white} />
+        </View>
       </Pressable>
     );
-  }, []);
+  }, [router]);
 
-  const renderCollection = useCallback(({ item }: { item: Collection }) => (
+  const renderCollection = useCallback(({ item }: { item: CollectionTile }) => (
     <Pressable
       style={[styles.collectionCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
     >
       <View style={styles.collectionCover}>
-        {item.coverImage ? (
-          <Image source={{ uri: item.coverImage }} style={styles.collectionImage} contentFit="cover" />
-        ) : (
-          <View style={[styles.collectionPlaceholder, { backgroundColor: colors.surface }]}>
-            <Ionicons name="bookmark" size={24} color={colors.textTertiary} />
-          </View>
-        )}
+        <View style={[styles.collectionPlaceholder, { backgroundColor: colors.surface }]}>
+          <Ionicons name="bookmark" size={24} color={colors.textTertiary} />
+        </View>
       </View>
       <Text style={[styles.collectionName, { color: colors.text }]}>{item.name}</Text>
       <Text style={[styles.collectionCount, { color: colors.textTertiary }]}>{item.count} items</Text>
@@ -114,7 +127,6 @@ export default function SavedScreen() {
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top + Spacing.sm, borderBottomColor: colors.border }]}>
         <Pressable onPress={() => router.back()} hitSlop={HitSlop.md}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
@@ -123,7 +135,6 @@ export default function SavedScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Mode toggle */}
       <View style={[styles.toggleRow, { borderBottomColor: colors.border }]}>
         {(['all', 'collections'] as ViewMode[]).map((m) => (
           <Pressable
@@ -147,16 +158,20 @@ export default function SavedScreen() {
         <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
       ) : mode === 'all' ? (
         <FlatList
-          data={savedPosts}
+          data={savedItems}
           renderItem={renderGridItem}
-          keyExtractor={(item) => item._id}
+          keyExtractor={(item) => item.saveId}
           numColumns={GRID_COL}
           columnWrapperStyle={styles.gridRow}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Ionicons name="bookmark-outline" size={48} color={colors.textTertiary} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>Nothing saved yet</Text>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Save posts to see them here</Text>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                {postsError ? 'Unable to load saved posts' : 'Nothing saved yet'}
+              </Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {postsError ?? 'Save posts to see them here'}
+              </Text>
             </View>
           }
         />
@@ -164,15 +179,19 @@ export default function SavedScreen() {
         <FlatList
           data={collections}
           renderItem={renderCollection}
-          keyExtractor={(item) => item._id}
+          keyExtractor={(item) => item.name}
           numColumns={2}
           contentContainerStyle={styles.collectionsGrid}
           columnWrapperStyle={{ gap: Spacing.sm }}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Ionicons name="albums-outline" size={48} color={colors.textTertiary} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>No collections</Text>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Organize saved posts into collections</Text>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                {collectionsError ? 'Unable to load collections' : 'No collections'}
+              </Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {collectionsError ?? 'Organize saved posts into collections'}
+              </Text>
             </View>
           }
         />
@@ -197,11 +216,10 @@ const styles = StyleSheet.create({
   collectionsGrid: { padding: Spacing.base },
   collectionCard: { flex: 1, borderRadius: Radii.lg, overflow: 'hidden', borderWidth: 1, marginBottom: Spacing.sm },
   collectionCover: { height: 120 },
-  collectionImage: { width: '100%', height: '100%' },
   collectionPlaceholder: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   collectionName: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm, paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   collectionCount: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
   emptyState: { alignItems: 'center', paddingTop: 80, gap: Spacing.md },
   emptyTitle: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.md },
-  emptyText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.sm },
+  emptyText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.sm, textAlign: 'center', paddingHorizontal: Spacing.xl },
 });

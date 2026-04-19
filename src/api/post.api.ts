@@ -1,7 +1,25 @@
 import apiClient from './client';
-import { getDummyFeed, getDummyExplore, getDummySavedPosts, getDummyPost } from '../data/dummyData';
+import {
+  mapPost,
+  mapReel,
+  unwrap,
+  type MobilePost,
+  type MobileReel,
+  type MobileUser,
+  mapUser,
+} from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Post API — wraps `/posts/*` on the backend.
+ *
+ * The backend uses cursor-based pagination; the mobile screens are written
+ * around page-style `{ posts, hasMore, page }` so we translate on the way
+ * out. Because page numbers can't be expressed as cursors, we just forward
+ * the previous response cursor via the `cursor` param — the `page` field
+ * is preserved for UI state only.
+ */
+
+export type { MobileUser as PostAuthor, MobilePost as Post };
 
 export interface PostMedia {
   type: 'image' | 'video';
@@ -12,99 +30,83 @@ export interface PostMedia {
   duration?: number;
 }
 
-export interface PostAuthor {
-  _id: string;
-  username: string;
-  fullName: string;
-  profilePicture: string;
-  isVerified: boolean;
-}
-
-export interface Post {
-  _id: string;
-  author: PostAuthor;
-  caption: string;
-  media: PostMedia[];
-  likesCount: number;
-  commentsCount: number;
-  viewsCount: number;
-  tags: string[];
-  location: { name: string; coordinates?: number[] } | null;
-  commentsDisabled: boolean;
-  hideLikesCount: boolean;
-  isArchived: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface PaginatedPosts {
-  posts: Post[];
+  posts: MobilePost[];
   hasMore: boolean;
   page: number;
+  cursor: string | null;
 }
 
-/* ───────── API Calls ───────── */
+const pageState = new Map<string, string | null>();
 
-/** GET /posts/feed?page=&limit= — authenticated feed (followed + popular) */
+const fetchPostList = async (path: string, pageKey: string, page: number, limit: number): Promise<PaginatedPosts> => {
+  const cursor = page === 1 ? undefined : pageState.get(pageKey) ?? undefined;
+  const { data } = await apiClient.get(path, { params: { cursor, limit } });
+  const items: any[] = Array.isArray(data.data) ? data.data : data.data?.items ?? [];
+  const nextCursor = data.meta?.cursor ?? null;
+  pageState.set(pageKey, nextCursor);
+  return {
+    posts: items.map(mapPost),
+    hasMore: Boolean(data.meta?.has_more),
+    page,
+    cursor: nextCursor,
+  };
+};
+
+/** GET /posts/feed — authenticated feed (followed users + suggested) */
 export async function getFeed(page = 1, limit = 10): Promise<PaginatedPosts> {
-  try {
-    const { data } = await apiClient.get('/posts/feed', { params: { page, limit } });
-    return {
-      posts: data.data.posts,
-      hasMore: data.data.pagination.hasMore,
-      page: data.data.pagination.page,
-    };
-  } catch {
-    return getDummyFeed(page, limit);
-  }
+  return fetchPostList('/posts/feed', 'feed', page, limit);
 }
 
-/** GET /posts/explore?page=&limit= — trending posts from non-followed users */
+/** GET /posts/explore — trending posts from across the platform */
 export async function getExplore(page = 1, limit = 20): Promise<PaginatedPosts> {
-  try {
-    const { data } = await apiClient.get('/posts/explore', { params: { page, limit } });
-    return {
-      posts: data.data.posts,
-      hasMore: data.data.pagination.hasMore,
-      page: data.data.pagination.page,
-    };
-  } catch {
-    return getDummyExplore(page, limit);
-  }
+  return fetchPostList('/posts/explore', 'explore', page, limit);
 }
 
-/** GET /posts/saved?page=&limit= */
-export async function getSavedPosts(page = 1, limit = 20): Promise<{ posts: Post[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/posts/saved', { params: { page, limit } });
-    return { posts: data.data.savedPosts, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummySavedPosts();
-  }
+/** GET /posts/:postId — single post */
+export async function getPost(postId: string): Promise<MobilePost> {
+  const res = await apiClient.get(`/posts/${postId}`);
+  return mapPost(unwrap<any>(res));
 }
 
-/** GET /posts/:postId — single post with view count increment */
-export async function getPost(postId: string): Promise<Post> {
-  try {
-    const { data } = await apiClient.get(`/posts/${postId}`);
-    return data.data.post;
-  } catch {
-    return getDummyPost(postId);
-  }
+/** Map UI visibility to backend POST_TYPES / VISIBILITY_OPTIONS. */
+const mapPostVisibility = (
+  v?: 'public' | 'private' | 'followers',
+): 'public' | 'followers' | 'close_friends' => {
+  if (v === 'private') return 'close_friends';
+  if (v === 'followers') return 'followers';
+  return 'public';
+};
+
+function derivePostType(mediaFiles: { type: string }[]): 'image' | 'video' | 'carousel' {
+  if (mediaFiles.length > 1) return 'carousel';
+  if (mediaFiles.some((f) => f.type.startsWith('video'))) return 'video';
+  return 'image';
 }
 
-/** POST /posts — create post with media upload (multipart) */
+/** POST /posts — create with multipart media upload */
 export async function createPost(payload: {
   caption: string;
   mediaFiles: { uri: string; type: string }[];
   location?: string;
   tags?: string[];
-}): Promise<Post> {
+  visibility?: 'public' | 'private' | 'followers';
+  commentsEnabled?: boolean;
+  likesVisible?: boolean;
+}): Promise<MobilePost> {
   const formData = new FormData();
-  formData.append('caption', payload.caption);
-
-  if (payload.location) formData.append('location', payload.location);
-  if (payload.tags) formData.append('tags', JSON.stringify(payload.tags));
+  formData.append('type', derivePostType(payload.mediaFiles));
+  if (payload.caption !== undefined && payload.caption !== '') {
+    formData.append('caption', payload.caption);
+  }
+  if (payload.location) formData.append('location', JSON.stringify({ name: payload.location }));
+  formData.append('visibility', mapPostVisibility(payload.visibility));
+  if (payload.commentsEnabled !== undefined) {
+    formData.append('comments_enabled', payload.commentsEnabled ? 'true' : 'false');
+  }
+  if (payload.likesVisible !== undefined) {
+    formData.append('likes_visible', payload.likesVisible ? 'true' : 'false');
+  }
 
   for (const file of payload.mediaFiles) {
     const filename = file.uri.split('/').pop() ?? 'media.jpg';
@@ -116,61 +118,87 @@ export async function createPost(payload: {
     } as any);
   }
 
-  try {
-    const { data } = await apiClient.post('/posts', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60_000,
-    });
-    return data.data.post;
-  } catch {
-    // Return optimistic post so offline creation appears to work
-    return {
-      _id: `post_offline_${Date.now()}`,
-      author: { _id: 'demo_user_001', username: 'alex.creates', fullName: 'Alex Morgan', profilePicture: 'https://i.pravatar.cc/150?u=alex', isVerified: true },
-      caption: payload.caption,
-      media: payload.mediaFiles.map((f, i) => ({ url: f.uri, type: f.type.startsWith('video') ? 'video' : 'image', _id: `m${i}` })),
-      likesCount: 0,
-      commentsCount: 0,
-      sharesCount: 0,
-      isLiked: false,
-      isSaved: false,
-      commentsDisabled: false,
-      hideLikesCount: false,
-      location: payload.location,
-      tags: payload.tags || [],
-      createdAt: new Date().toISOString(),
-    } as any;
-  }
+  const res = await apiClient.post('/posts', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120_000,
+  });
+  return mapPost(unwrap<any>(res));
 }
 
-/** PUT /posts/:postId — update caption / settings */
+/** PUT /posts/:postId — edit caption / settings */
 export async function updatePost(
   postId: string,
   updates: { caption?: string; commentsDisabled?: boolean; hideLikesCount?: boolean },
-): Promise<Post> {
-  try {
-    const { data } = await apiClient.put(`/posts/${postId}`, updates);
-    return data.data.post;
-  } catch {
-    return { _id: postId, ...updates } as any;
-  }
+): Promise<MobilePost> {
+  const body: any = {};
+  if (updates.caption !== undefined) body.caption = updates.caption;
+  if (updates.commentsDisabled !== undefined) body.comments_enabled = !updates.commentsDisabled;
+  if (updates.hideLikesCount !== undefined) body.likes_visible = !updates.hideLikesCount;
+
+  const res = await apiClient.put(`/posts/${postId}`, body);
+  return mapPost(unwrap<any>(res));
 }
 
 /** DELETE /posts/:postId */
 export async function deletePost(postId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/posts/${postId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/posts/${postId}`);
 }
 
-/** POST /posts/:postId/save — toggle save/unsave */
-export async function toggleSavePost(postId: string): Promise<boolean> {
-  try {
-    const { data } = await apiClient.post(`/posts/${postId}/save`);
-    return data.data.isSaved;
-  } catch {
-    return true;
+/** POST/DELETE /posts/:postId/save — toggle save/unsave */
+export async function toggleSavePost(postId: string, currentlySaved = false): Promise<boolean> {
+  if (currentlySaved) {
+    await apiClient.delete(`/posts/${postId}/save`);
+    return false;
   }
+  await apiClient.post(`/posts/${postId}/save`, {});
+  return true;
+}
+
+/** POST /posts/:postId/share */
+export async function sharePost(
+  postId: string,
+  shareType: 'dm' | 'external' | 'copy_link',
+  extras: { recipientId?: string; platform?: string } = {},
+): Promise<void> {
+  await apiClient.post(`/posts/${postId}/share`, {
+    share_type: shareType,
+    recipient_id: extras.recipientId,
+    platform: extras.platform,
+  });
+}
+
+/** PUT /posts/:postId/pin */
+export async function togglePinPost(postId: string): Promise<boolean> {
+  const res = await apiClient.put(`/posts/${postId}/pin`);
+  return Boolean(unwrap<any>(res).is_pinned);
+}
+
+/** One saved row from GET /saved (post or reel, with save metadata). */
+export type SavedFeedItem =
+  | { kind: 'post'; saveId: string; collectionName: string; post: MobilePost }
+  | { kind: 'reel'; saveId: string; collectionName: string; reel: MobileReel };
+
+/** GET /saved — authenticated user's saved posts and reels */
+export async function getSavedPosts(page = 1, limit = 20): Promise<{ items: SavedFeedItem[]; hasMore: boolean }> {
+  if (page === 1) pageState.delete('saved');
+  const cursor = page === 1 ? undefined : pageState.get('saved') ?? undefined;
+  const { data } = await apiClient.get('/saved', { params: { cursor, limit } });
+  const rows: any[] = Array.isArray(data.data) ? data.data : [];
+  pageState.set('saved', data.meta?.cursor ?? null);
+
+  const items: SavedFeedItem[] = [];
+  for (const row of rows) {
+    const saveId = String(row._id ?? row.id ?? '');
+    const collectionName = String(row.collection_name ?? 'All Posts');
+    if (row.target_type === 'reel' && row.reel) {
+      items.push({ kind: 'reel', saveId, collectionName, reel: mapReel(row.reel) });
+    } else if (row.target_type === 'post' && row.post) {
+      items.push({ kind: 'post', saveId, collectionName, post: mapPost(row.post) });
+    }
+  }
+
+  return {
+    items,
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }

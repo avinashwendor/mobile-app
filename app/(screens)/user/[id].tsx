@@ -41,7 +41,7 @@ export default function UserProfileScreen() {
       try {
         const p = await userApi.getUserProfile(username);
         setProfile(p);
-        setIsFollowing(p.isFollowing);
+        setIsFollowing(Boolean(p.isFollowing));
       } catch (err) {
         console.error('Failed to load user:', err);
       } finally {
@@ -162,9 +162,12 @@ export default function UserProfileScreen() {
               style={[styles.messageBtn, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
               onPress={async () => {
                 try {
-                  const conv = await (await import('../../../src/api/chat.api')).createConversation([profile._id]);
+                  const chatApi = await import('../../../src/api/chat.api');
+                  const conv = await chatApi.createConversation([String(profile._id).trim()]);
                   router.push({ pathname: '/(screens)/chat/[convId]', params: { convId: conv._id } });
-                } catch {}
+                } catch (err: any) {
+                  Alert.alert('Message', err?.message || 'Could not open chat. Try again.');
+                }
               }}
             >
               <Text style={[styles.messageBtnText, { color: colors.text }]}>Message</Text>

@@ -1,89 +1,59 @@
 import apiClient from './client';
-import { DUMMY_FOLLOW_REQUESTS, getDummyMutualFollowers } from '../data/dummyData';
+import { mapUser, type MobileUser } from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Follow API — thin wrapper around `/users/:userId/follow` and related
+ * endpoints. The backend returns `{ status: 'active' | 'pending' }` on
+ * follow; the app model normalizes to `'accepted' | 'pending'`.
+ */
 
 export interface FollowResult {
-  _id: string;
-  follower: string;
-  following: string;
   status: 'accepted' | 'pending';
-  createdAt: string;
 }
 
 export interface FollowRequest {
   _id: string;
-  user: {
-    _id: string;
-    username: string;
-    fullName: string;
-    profilePicture: string;
-    isVerified: boolean;
-  };
+  user: MobileUser;
   createdAt: string;
 }
 
-/* ───────── API Calls ───────── */
-
-/** POST /follows/:userId — follow a user */
 export async function followUser(userId: string): Promise<FollowResult> {
-  try {
-    const { data } = await apiClient.post(`/follows/${userId}`);
-    return data.data.follow;
-  } catch {
-    return { _id: `follow_${Date.now()}`, follower: 'demo_user_001', following: userId, status: 'accepted', createdAt: new Date().toISOString() };
-  }
+  const res = await apiClient.post(`/users/${userId}/follow`, {});
+  const raw = res.data?.data ?? {};
+  const status = raw.status === 'pending' ? 'pending' : 'accepted';
+  return { status };
 }
 
-/** DELETE /follows/:userId — unfollow a user */
 export async function unfollowUser(userId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/follows/${userId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/users/${userId}/follow`);
 }
 
-/** GET /follows/requests — pending follow requests for current user */
+export async function blockUser(userId: string): Promise<void> {
+  await apiClient.post(`/users/${userId}/block`, {});
+}
+
+export async function unblockUser(userId: string): Promise<void> {
+  await apiClient.delete(`/users/${userId}/block`);
+}
+
+/**
+ * Pending follow requests aren't exposed as a dedicated endpoint on the
+ * backend; they live as Follower documents with status=pending. We surface
+ * an empty list when no feed endpoint is available, rather than pretending
+ * with dummy data. When a follow-requests endpoint is wired up, point this
+ * at it.
+ */
 export async function getFollowRequests(
-  page = 1,
-  limit = 20,
+  _page: number = 1,
+  _limit: number = 20,
 ): Promise<{ requests: FollowRequest[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/follows/requests', { params: { page, limit } });
-    return { requests: data.data.requests, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return { requests: DUMMY_FOLLOW_REQUESTS, hasMore: false };
-  }
+  return { requests: [], hasMore: false };
 }
 
-/** POST /follows/requests/:requestId/accept */
-export async function acceptFollowRequest(requestId: string): Promise<void> {
-  try {
-    await apiClient.post(`/follows/requests/${requestId}/accept`);
-  } catch {
-    // Silently succeed offline
-  }
+export async function acceptFollowRequest(_requestId: string): Promise<void> {
+  throw Object.assign(new Error('Follow request management is not yet supported by the API'), { code: 'NOT_IMPLEMENTED' });
 }
 
-/** DELETE /follows/requests/:requestId — decline a follow request */
-export async function declineFollowRequest(requestId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/follows/requests/${requestId}`);
-  } catch {
-    // Silently succeed offline
-  }
-}
-
-/** GET /follows/mutual/:userId — get mutual followers */
-export async function getMutualFollowers(
-  userId: string,
-  limit = 10,
-): Promise<{ mutualFollowers: any[]; count: number }> {
-  try {
-    const { data } = await apiClient.get(`/follows/mutual/${userId}`, { params: { limit } });
-    return data.data;
-  } catch {
-    return getDummyMutualFollowers(userId);
-  }
+export async function declineFollowRequest(_requestId: string): Promise<void> {
+  throw Object.assign(new Error('Follow request management is not yet supported by the API'), { code: 'NOT_IMPLEMENTED' });
 }

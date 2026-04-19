@@ -56,25 +56,32 @@ export default function HomeFeedScreen() {
   const fetchStories = useCallback(async () => {
     try {
       const groups = await storyApi.getStoryFeed();
-      setStoryGroups(groups);
+      const uid = user?._id;
+      const filtered = uid ? groups.filter((g) => g.author._id !== uid) : groups;
+      setStoryGroups(filtered);
     } catch (err) {
       console.error('Failed to load stories:', err);
     }
-  }, []);
+  }, [user?._id]);
 
   useEffect(() => {
     (async () => {
       setIsLoading(true);
-      await Promise.all([fetchFeed(1, true), fetchStories()]);
+      await fetchFeed(1, true);
       setIsLoading(false);
     })();
   }, []);
 
+  useEffect(() => {
+    fetchStories();
+  }, [fetchStories]);
+
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await Promise.all([fetchFeed(1, true), fetchStories()]);
+    await fetchFeed(1, true);
+    await fetchStories();
     setIsRefreshing(false);
-  }, []);
+  }, [fetchFeed, fetchStories]);
 
   const handleLoadMore = useCallback(async () => {
     if (!hasMore || isLoadingMore) return;
@@ -94,7 +101,7 @@ export default function HomeFeedScreen() {
         ListHeaderComponent={
           <Pressable style={styles.storyItem} onPress={() => router.push('/(tabs)/create')}>
             <View style={[styles.addStoryRing, { borderColor: colors.border }]}>
-              <UserAvatar uri={user?.profilePicture} size="lg" />
+              <UserAvatar uri={user?.profilePicture} size="lg" priority="high" />
               <View style={styles.addStoryBadge}>
                 <LinearGradient colors={[...Colors.gradientPrimary]} style={styles.addIcon}>
                   <Ionicons name="add" size={14} color={Colors.white} />
@@ -116,7 +123,7 @@ export default function HomeFeedScreen() {
               style={styles.storyRing}
             >
               <View style={[styles.storyRingInner, { backgroundColor: colors.background }]}>
-                <UserAvatar uri={item.author.profilePicture} size="lg" />
+                <UserAvatar uri={item.author.profilePicture} size="lg" priority="high" />
               </View>
             </LinearGradient>
             <Text style={[styles.storyUsername, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -131,6 +138,8 @@ export default function HomeFeedScreen() {
   const renderPost = useCallback(({ item }: { item: Post }) => (
     <PostCard
       post={item}
+      initialIsLiked={item.isLiked}
+      initialIsSaved={item.isSaved}
       onComment={(id) => router.push({ pathname: '/(screens)/comments', params: { contentType: 'post', contentId: id } })}
       onShare={(id) => setSharePostId(id)}
       onUserPress={(username) => router.push({ pathname: '/(screens)/user/[id]', params: { id: username } })}

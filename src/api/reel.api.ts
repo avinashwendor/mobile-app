@@ -1,95 +1,69 @@
 import apiClient from './client';
-import type { PostAuthor } from './post.api';
-import { getDummyReelsFeed, DUMMY_REELS, DUMMY_TRENDING_HASHTAGS } from '../data/dummyData';
+import { mapReel, unwrap, type MobileReel, type MobileUser } from './adapters';
 
-/* ───────── Types ───────── */
+/**
+ * Reel API — backend routes under `/reels`.
+ * Feeds are cursor-paginated; we preserve the caller's page numbering.
+ */
 
-export interface Reel {
-  _id: string;
-  author: PostAuthor;
-  caption: string;
-  video: {
-    url: string;
-    thumbnail: string;
-    width: number;
-    height: number;
-    duration: number;
+export type Reel = MobileReel;
+
+const pageState = new Map<string, string | null>();
+
+const fetchReelList = async (path: string, pageKey: string, page: number, limit: number) => {
+  const cursor = page === 1 ? undefined : pageState.get(pageKey) ?? undefined;
+  const { data } = await apiClient.get(path, { params: { cursor, limit } });
+  const items: any[] = Array.isArray(data.data) ? data.data : [];
+  pageState.set(pageKey, data.meta?.cursor ?? null);
+  return {
+    reels: items.map(mapReel),
+    hasMore: Boolean(data.meta?.has_more),
+    page,
   };
-  audio: { title?: string; artist?: string; originalAudio?: string } | null;
-  hashtags: string[];
-  likesCount: number;
-  commentsCount: number;
-  sharesCount: number;
-  viewsCount: number;
-  allowRemix: boolean;
-  createdAt: string;
-}
+};
 
-/* ───────── API Calls ───────── */
-
-/** GET /reels/feed?page=&limit=&sort= */
 export async function getReelsFeed(
   page = 1,
   limit = 10,
   sort: 'trending' | 'newest' | 'popular' = 'trending',
-): Promise<{ reels: Reel[]; hasMore: boolean }> {
-  try {
-    const { data } = await apiClient.get('/reels/feed', { params: { page, limit, sort } });
-    return { reels: data.data.reels, hasMore: data.data.pagination.hasMore };
-  } catch {
-    return getDummyReelsFeed(page, limit);
-  }
+): Promise<{ reels: Reel[]; hasMore: boolean; page: number }> {
+  const path = sort === 'trending' ? '/reels/trending' : sort === 'popular' ? '/reels/for-you' : '/reels/feed';
+  return fetchReelList(path, `feed-${sort}`, page, limit);
 }
 
-/** GET /reels/:reelId — single reel (increments view count) */
 export async function getReel(reelId: string): Promise<Reel> {
-  try {
-    const { data } = await apiClient.get(`/reels/${reelId}`);
-    return data.data.reel;
-  } catch {
-    return DUMMY_REELS.find((r) => r._id === reelId) || DUMMY_REELS[0];
-  }
+  const res = await apiClient.get(`/reels/${reelId}`);
+  return mapReel(unwrap<any>(res));
 }
 
-/** POST /reels — create reel with video upload (multipart) */
 export async function createReel(payload: {
   videoUri: string;
   caption: string;
   hashtags?: string[];
 }): Promise<Reel> {
   const formData = new FormData();
-  formData.append('caption', payload.caption);
-  if (payload.hashtags) formData.append('hashtags', JSON.stringify(payload.hashtags));
+  if (payload.caption) formData.append('description', payload.caption);
+  if (payload.hashtags?.length) formData.append('hashtags', JSON.stringify(payload.hashtags));
 
   const filename = payload.videoUri.split('/').pop() ?? 'reel.mp4';
   formData.append('video', { uri: payload.videoUri, name: filename, type: 'video/mp4' } as any);
 
-  try {
-    const { data } = await apiClient.post('/reels', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120_000,
-    });
-    return data.data.reel;
-  } catch {
-    return { _id: `reel_offline_${Date.now()}`, caption: payload.caption, video: { url: payload.videoUri }, likesCount: 0, commentsCount: 0, sharesCount: 0, createdAt: new Date().toISOString() } as any;
-  }
+  const res = await apiClient.post('/reels', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180_000,
+  });
+  return mapReel(unwrap<any>(res));
 }
 
-/** DELETE /reels/:reelId */
 export async function deleteReel(reelId: string): Promise<void> {
-  try {
-    await apiClient.delete(`/reels/${reelId}`);
-  } catch {
-    // Silently succeed offline
-  }
+  await apiClient.delete(`/reels/${reelId}`);
 }
 
-/** GET /reels/trending/hashtags */
-export async function getTrendingHashtags(limit = 20): Promise<any[]> {
-  try {
-    const { data } = await apiClient.get('/reels/trending/hashtags', { params: { limit } });
-    return data.data.hashtags;
-  } catch {
-    return DUMMY_TRENDING_HASHTAGS.slice(0, limit);
-  }
+export async function saveReel(reelId: string): Promise<void> {
+  await apiClient.post(`/reels/${reelId}/save`, {});
+}
+
+/** No trending-hashtag endpoint yet — return empty list so UI renders nothing. */
+export async function getTrendingHashtags(_limit = 20): Promise<{ name: string; count?: number }[]> {
+  return [];
 }

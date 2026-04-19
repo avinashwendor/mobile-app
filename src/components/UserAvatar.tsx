@@ -10,6 +10,8 @@ interface UserAvatarProps {
   showOnlineIndicator?: boolean;
   isOnline?: boolean;
   style?: ViewStyle;
+  /** Prefer high for story rings / above-the-fold avatars so images resolve faster. */
+  priority?: 'low' | 'normal' | 'high';
 }
 
 /**
@@ -22,6 +24,7 @@ export default function UserAvatar({
   showOnlineIndicator = false,
   isOnline = false,
   style,
+  priority = 'normal',
 }: UserAvatarProps) {
   const { colors } = useTheme();
   const dimension = AvatarSizes[size];
@@ -46,6 +49,8 @@ export default function UserAvatar({
         ]}
         contentFit="cover"
         transition={200}
+        priority={priority}
+        cachePolicy="memory-disk"
       />
       {showOnlineIndicator && isOnline && (
         <View
