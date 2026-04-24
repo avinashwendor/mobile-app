@@ -26,10 +26,10 @@ const resolveDevHost = (): string => {
 const host = resolveDevHost();
 
 /** Base URL for REST requests — mounts under `/api/v1` on the backend */
-export const API_BASE_URL = `http://${host}:${DEFAULT_DEV_PORT}/api/v1`;
+export const API_BASE_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com/api/v1`;
 
 /** WebSocket endpoint served by the same HTTP server (Socket.IO) */
-export const WS_URL = `http://${host}:${DEFAULT_DEV_PORT}`;
+export const WS_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com`;
 
 export const NOTIFICATION_TYPES = {
   LIKE: 'like',
