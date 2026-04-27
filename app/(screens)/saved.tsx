@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
-  Dimensions,
+  Dimensions, RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -36,6 +36,7 @@ export default function SavedScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
   const [collectionsError, setCollectionsError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchSaved = useCallback(async () => {
     try {
@@ -63,6 +64,12 @@ export default function SavedScreen() {
   useEffect(() => {
     Promise.all([fetchSaved(), fetchCollections()]).finally(() => setIsLoading(false));
   }, [fetchSaved, fetchCollections]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await Promise.all([fetchSaved(), fetchCollections()]);
+    setIsRefreshing(false);
+  }, [fetchCollections, fetchSaved]);
 
   const renderGridItem = useCallback(({ item }: { item: SavedFeedItem }) => {
     if (item.kind === 'post') {
@@ -158,11 +165,13 @@ export default function SavedScreen() {
         <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
       ) : mode === 'all' ? (
         <FlatList
+          key="saved-all-grid"
           data={savedItems}
           renderItem={renderGridItem}
           keyExtractor={(item) => item.saveId}
           numColumns={GRID_COL}
           columnWrapperStyle={styles.gridRow}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Ionicons name="bookmark-outline" size={48} color={colors.textTertiary} />
@@ -177,12 +186,14 @@ export default function SavedScreen() {
         />
       ) : (
         <FlatList
+          key="saved-collections-grid"
           data={collections}
           renderItem={renderCollection}
           keyExtractor={(item) => item.name}
           numColumns={2}
           contentContainerStyle={styles.collectionsGrid}
           columnWrapperStyle={{ gap: Spacing.sm }}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />}
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Ionicons name="albums-outline" size={48} color={colors.textTertiary} />

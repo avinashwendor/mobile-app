@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Dimensions,
-  ActivityIndicator, FlatList,
+  ActivityIndicator, FlatList, RefreshControl,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,6 +38,8 @@ export default function ReelsScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [commentSheetReelId, setCommentSheetReelId] = useState<string | null>(null);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
@@ -88,9 +90,18 @@ export default function ReelsScreen() {
     }
   }, [openCommentsParam, reels, startReelId]);
 
-  const handleLoadMore = useCallback(() => {
-    if (hasMore) void fetchReels(page + 1);
-  }, [hasMore, page, fetchReels]);
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await fetchReels(1, true);
+    setIsRefreshing(false);
+  }, [fetchReels]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!hasMore || isLoadingMore || isRefreshing) return;
+    setIsLoadingMore(true);
+    await fetchReels(page + 1);
+    setIsLoadingMore(false);
+  }, [fetchReels, hasMore, isLoadingMore, isRefreshing, page]);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
     if (viewableItems.length > 0) {
@@ -148,8 +159,12 @@ export default function ReelsScreen() {
         onScrollToIndexFailed={({ index }) => {
           listRef.current?.scrollToOffset({ offset: index * SCREEN_HEIGHT, animated: false });
         }}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={Colors.primary} />
+        }
         onEndReached={handleLoadMore}
         onEndReachedThreshold={2}
+        ListFooterComponent={isLoadingMore ? <ActivityIndicator color={Colors.white} style={{ marginVertical: 16 }} /> : null}
         ListEmptyComponent={
           <View style={[styles.center, { height: SCREEN_HEIGHT }]}>
             <Ionicons name="videocam-outline" size={48} color={Colors.dark.textTertiary} />

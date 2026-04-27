@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Alert, Keyboard, Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -148,7 +148,32 @@ export default function ChatThreadScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const keyboardOffset = useMemo(() => insets.top + 56, [insets.top]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = Keyboard.addListener(showEvent, (event: any) => {
+      const windowHeight = Dimensions.get('window').height;
+      const eventHeight = event?.endCoordinates?.height ?? 0;
+      const screenY = event?.endCoordinates?.screenY ?? windowHeight;
+      const derivedHeight = Math.max(0, windowHeight - screenY);
+      setKeyboardHeight(Math.max(eventHeight, derivedHeight));
+    });
+
+    const onHide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const fetchMessages = useCallback(async (p: number, refresh = false) => {
     if (!convId) return;
@@ -360,10 +385,10 @@ export default function ChatThreadScreen() {
 
       {/* Input */}
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 56 : 0}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? keyboardOffset : 0}
       >
-        <View style={[styles.inputBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: insets.bottom + Spacing.sm }]}>
+        <View style={[styles.inputBar, { backgroundColor: colors.surface, borderTopColor: colors.border, paddingBottom: Math.max(insets.bottom + Spacing.sm, keyboardHeight + Spacing.xs) }]}>
           <Pressable style={styles.attachBtn}>
             <Ionicons name="image-outline" size={22} color={colors.textSecondary} />
           </Pressable>

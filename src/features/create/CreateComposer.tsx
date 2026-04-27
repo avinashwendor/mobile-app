@@ -140,6 +140,11 @@ const VISIBILITY_META: { value: Visibility; label: string; icon: keyof typeof Io
 ];
 
 const MAX_CAPTION = 2200;
+const DEFAULT_PICKER_QUALITY = 0.78;
+const REEL_PICKER_QUALITY = 0.62;
+
+const IOS_VIDEO_MEDIUM_QUALITY = (ImagePicker as any).UIImagePickerControllerQualityType?.Medium;
+const IOS_VIDEO_MEDIUM_PRESET = (ImagePicker as any).VideoExportPreset?.MediumQuality;
 
 export default function CreateScreen() {
   const router = useRouter();
@@ -210,9 +215,11 @@ export default function CreateScreen() {
         mediaTypes: meta.mediaTypes,
         allowsMultipleSelection: meta.allowsMultiple,
         selectionLimit: meta.allowsMultiple ? 10 : 1,
-        quality: 0.85,
+        quality: mode === 'reel' ? REEL_PICKER_QUALITY : DEFAULT_PICKER_QUALITY,
         videoMaxDuration: meta.maxDuration,
         exif: false,
+        ...(mode === 'reel' && IOS_VIDEO_MEDIUM_QUALITY ? { videoQuality: IOS_VIDEO_MEDIUM_QUALITY } : {}),
+        ...(mode === 'reel' && IOS_VIDEO_MEDIUM_PRESET ? { videoExportPreset: IOS_VIDEO_MEDIUM_PRESET } : {}),
       });
 
       if (result.canceled || result.assets.length === 0) return;
@@ -257,8 +264,9 @@ export default function CreateScreen() {
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: meta.mediaTypes,
-        quality: 0.85,
+        quality: mode === 'reel' ? REEL_PICKER_QUALITY : DEFAULT_PICKER_QUALITY,
         videoMaxDuration: meta.maxDuration,
+        ...(mode === 'reel' && IOS_VIDEO_MEDIUM_QUALITY ? { videoQuality: IOS_VIDEO_MEDIUM_QUALITY } : {}),
       });
 
       if (result.canceled || result.assets.length === 0) return;

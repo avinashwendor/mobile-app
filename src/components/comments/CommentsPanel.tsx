@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TextInput, Pressable, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Share, Alert,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Share, Alert, Keyboard, Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -189,6 +189,7 @@ export default function CommentsPanel({
   const [newComment, setNewComment] = useState('');
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [isSending, setIsSending] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [replyTo, setReplyTo] = useState<{ id: string; username: string } | null>(null);
   const [expandedReplies, setExpandedReplies] = useState<Set<string>>(new Set());
   const [loadingReplies, setLoadingReplies] = useState<Set<string>>(new Set());
@@ -401,6 +402,33 @@ export default function CommentsPanel({
       })
       .slice(0, 6);
   }, [activeMention, mentionCandidates]);
+
+  const keyboardOffset = useMemo(() => {
+    if (headerMode !== 'screen') return 0;
+    return insets.top + 56;
+  }, [headerMode, insets.top]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = Keyboard.addListener(showEvent, (event: any) => {
+      const windowHeight = Dimensions.get('window').height;
+      const eventHeight = event?.endCoordinates?.height ?? 0;
+      const screenY = event?.endCoordinates?.screenY ?? windowHeight;
+      const derivedHeight = Math.max(0, windowHeight - screenY);
+      setKeyboardHeight(Math.max(eventHeight, derivedHeight));
+    });
+
+    const onHide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!newComment.trim() || isSending) return;
@@ -632,13 +660,16 @@ export default function CommentsPanel({
         />
       )}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? keyboardOffset : 0}
+      >
         <View style={[
           styles.inputBar,
           {
             backgroundColor: colors.surface,
             borderTopColor: colors.border,
-            paddingBottom: insets.bottom || Spacing.sm,
+            paddingBottom: Math.max(insets.bottom || Spacing.sm, keyboardHeight + Spacing.xs),
           },
         ]}>
           {mentionSuggestions.length > 0 && (
