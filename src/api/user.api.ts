@@ -1,5 +1,12 @@
 import apiClient from './client';
-import { mapPost, mapUser, type MobilePost, type MobileUser } from './adapters';
+import {
+  mapPost,
+  mapReel,
+  mapUser,
+  type MobilePost,
+  type MobileReel,
+  type MobileUser,
+} from './adapters';
 
 /**
  * User API — resolve user profiles, lists, and search results.
@@ -24,6 +31,15 @@ export type UserProfile = MobileUser & {
   followStatus: 'accepted' | 'pending' | null;
 };
 
+export interface MyProfileMedia {
+  ownPosts: MobilePost[];
+  ownReels: MobileReel[];
+  collaboratedPosts: MobilePost[];
+  collaboratedReels: MobileReel[];
+  taggedPosts: MobilePost[];
+  taggedReels: MobileReel[];
+}
+
 export interface UserSearchResult {
   _id: string;
   username: string;
@@ -31,19 +47,30 @@ export interface UserSearchResult {
   profilePicture: string;
   isVerified: boolean;
   followersCount: number;
+  mutualFollowersCount?: number;
+  mutualFollowers?: string[];
 }
 
 /** Small in-memory cache from username → userId for avatar-pressed navigation */
 const usernameToId = new Map<string, string>();
 
-const toSearchResult = (u: MobileUser): UserSearchResult => ({
-  _id: u._id,
-  username: u.username,
-  fullName: u.fullName,
-  profilePicture: u.profilePicture,
-  isVerified: u.isVerified,
-  followersCount: u.followersCount,
-});
+const toSearchResult = (raw: any): UserSearchResult => {
+  const user = mapUser(raw);
+  return {
+    _id: user._id,
+    username: user.username,
+    fullName: user.fullName,
+    profilePicture: user.profilePicture,
+    isVerified: user.isVerified,
+    followersCount: user.followersCount,
+    mutualFollowersCount: Number(raw?.mutual_followers_count ?? raw?.mutualFollowersCount ?? 0),
+    mutualFollowers: Array.isArray(raw?.mutual_followers)
+      ? raw.mutual_followers.map((value: unknown) => String(value))
+      : Array.isArray(raw?.mutualFollowers)
+        ? raw.mutualFollowers.map((value: unknown) => String(value))
+        : [],
+  };
+};
 
 const resolveUserId = async (identifier: string): Promise<string> => {
   // If it looks like an ObjectId, use it directly.
@@ -74,7 +101,7 @@ export async function searchUsers(
   const { data } = await apiClient.get('/users/search', { params: { q: query, limit } });
   const list = Array.isArray(data.data) ? data.data : [];
   return {
-    users: list.map(mapUser).map(toSearchResult),
+    users: list.map(toSearchResult),
     hasMore: Boolean(data.meta?.has_more),
   };
 }
@@ -83,7 +110,7 @@ export async function searchUsers(
 export async function getSuggestions(limit = 20): Promise<UserSearchResult[]> {
   const { data } = await apiClient.get('/users/suggestions', { params: { limit } });
   const list = Array.isArray(data.data) ? data.data : [];
-  return list.map(mapUser).map(toSearchResult);
+  return list.map(toSearchResult);
 }
 
 /** Full profile by username or id. */
@@ -113,6 +140,23 @@ export async function getUserPosts(
   return { posts: [], hasMore: false };
 }
 
+/** Current user's profile media buckets for the profile dashboard tabs. */
+export async function getMyProfileMedia(limit = 60): Promise<MyProfileMedia> {
+  const { data } = await apiClient.get('/users/me/profile-media', {
+    params: { limit },
+  });
+  const raw = data?.data ?? {};
+
+  return {
+    ownPosts: Array.isArray(raw.own_posts) ? raw.own_posts.map(mapPost) : [],
+    ownReels: Array.isArray(raw.own_reels) ? raw.own_reels.map(mapReel) : [],
+    collaboratedPosts: Array.isArray(raw.collaborated_posts) ? raw.collaborated_posts.map(mapPost) : [],
+    collaboratedReels: Array.isArray(raw.collaborated_reels) ? raw.collaborated_reels.map(mapReel) : [],
+    taggedPosts: Array.isArray(raw.tagged_posts) ? raw.tagged_posts.map(mapPost) : [],
+    taggedReels: Array.isArray(raw.tagged_reels) ? raw.tagged_reels.map(mapReel) : [],
+  };
+}
+
 export async function getUserFollowers(
   usernameOrId: string,
   _page = 1,
@@ -123,8 +167,7 @@ export async function getUserFollowers(
   const list = Array.isArray(data.data) ? data.data : [];
   return {
     followers: list
-      .map((row: any) => mapUser(row.follower_id ?? row.user_id ?? row))
-      .map(toSearchResult),
+      .map((row: any) => toSearchResult(row.follower_id ?? row.user_id ?? row)),
     hasMore: Boolean(data.meta?.has_more),
   };
 }
@@ -139,8 +182,7 @@ export async function getUserFollowing(
   const list = Array.isArray(data.data) ? data.data : [];
   return {
     following: list
-      .map((row: any) => mapUser(row.following_id ?? row.user_id ?? row))
-      .map(toSearchResult),
+      .map((row: any) => toSearchResult(row.following_id ?? row.user_id ?? row)),
     hasMore: Boolean(data.meta?.has_more),
   };
 }

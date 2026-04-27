@@ -14,8 +14,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { Colors, Typography, Spacing, Radii } from '../../src/theme/tokens';
+import { Colors, Typography, Spacing } from '../../src/theme/tokens';
 import UserAvatar from '../../src/components/UserAvatar';
+import CommentsSheet from '../../src/components/comments/CommentsSheet';
+import ShareSheet from '../../src/components/ShareSheet';
 import * as reelApi from '../../src/api/reel.api';
 import * as likeApi from '../../src/api/like.api';
 import { compactNumber } from '../../src/utils/formatters';
@@ -26,15 +28,20 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 export default function ReelsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { colors } = useTheme();
-  const params = useLocalSearchParams<{ startReelId?: string | string[] }>();
+  useTheme();
+  const params = useLocalSearchParams<{ startReelId?: string | string[]; openComments?: string | string[]; commentId?: string | string[] }>();
   const startReelId = Array.isArray(params.startReelId) ? params.startReelId[0] : params.startReelId;
+  const openCommentsParam = Array.isArray(params.openComments) ? params.openComments[0] : params.openComments;
+  const highlightCommentId = Array.isArray(params.commentId) ? params.commentId[0] : params.commentId;
 
   const [reels, setReels] = useState<Reel[]>([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [commentSheetReelId, setCommentSheetReelId] = useState<string | null>(null);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [shareSheetReelId, setShareSheetReelId] = useState<string | null>(null);
   const listRef = useRef<FlatList<Reel>>(null);
 
   const fetchReels = useCallback(async (pageNum: number, refresh = false) => {
@@ -57,7 +64,7 @@ export default function ReelsScreen() {
       await fetchReels(1, true);
       setIsLoading(false);
     })();
-  }, []);
+  }, [fetchReels]);
 
   useEffect(() => {
     if (!startReelId || reels.length === 0) return;
@@ -73,6 +80,13 @@ export default function ReelsScreen() {
     }, 120);
     return () => clearTimeout(t);
   }, [startReelId, reels]);
+
+  useEffect(() => {
+    if (openCommentsParam !== '1' || !startReelId || reels.length === 0) return;
+    if (reels.some((reel) => reel._id === startReelId)) {
+      setCommentSheetReelId(startReelId);
+    }
+  }, [openCommentsParam, reels, startReelId]);
 
   const handleLoadMore = useCallback(() => {
     if (hasMore) void fetchReels(page + 1);
@@ -106,7 +120,18 @@ export default function ReelsScreen() {
         ref={listRef}
         data={reels}
         renderItem={({ item, index }) => (
-          <ReelItem reel={item} isActive={index === activeIndex} insets={insets} router={router} />
+          <ReelItem
+            reel={item}
+            isActive={index === activeIndex}
+            insets={insets}
+            router={router}
+            onCommentPress={(reelId) => {
+              setCommentsExpanded(false);
+              setCommentSheetReelId(reelId);
+            }}
+            onSharePress={(reelId) => setShareSheetReelId(reelId)}
+            isPlaybackPaused={commentsExpanded && commentSheetReelId === item._id}
+          />
         )}
         keyExtractor={(item) => item._id}
         pagingEnabled
@@ -132,22 +157,67 @@ export default function ReelsScreen() {
           </View>
         }
       />
+
+      {commentSheetReelId && (
+        <CommentsSheet
+          visible={!!commentSheetReelId}
+          contentType="reel"
+          contentId={commentSheetReelId}
+          onClose={() => {
+            setCommentSheetReelId(null);
+            setCommentsExpanded(false);
+          }}
+          initialExpanded={false}
+          highlightCommentId={highlightCommentId}
+          onExpandedChange={setCommentsExpanded}
+        />
+      )}
+
+      {shareSheetReelId && (
+        <ShareSheet
+          visible={!!shareSheetReelId}
+          onClose={() => setShareSheetReelId(null)}
+          contentType="reel"
+          contentId={shareSheetReelId}
+        />
+      )}
     </View>
   );
 }
 
-function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: boolean; insets: any; router: any }) {
+function ReelItem({
+  reel,
+  isActive,
+  insets,
+  router,
+  onCommentPress,
+  onSharePress,
+  isPlaybackPaused,
+}: {
+  reel: Reel;
+  isActive: boolean;
+  insets: any;
+  router: any;
+  onCommentPress: (reelId: string) => void;
+  onSharePress: (reelId: string) => void;
+  isPlaybackPaused: boolean;
+}) {
   const [isLiked, setIsLiked] = useState(Boolean(reel.isLiked));
   const [likeCount, setLikeCount] = useState(reel.likesCount);
   const [videoReady, setVideoReady] = useState(false);
+  const prevReelIdRef = useRef(reel._id);
 
   useEffect(() => {
     setIsLiked(Boolean(reel.isLiked));
     setLikeCount(reel.likesCount);
   }, [reel._id, reel.isLiked, reel.likesCount]);
 
+  // Reset video-ready state only when the reel changes or becomes inactive
   useEffect(() => {
-    if (!isActive) setVideoReady(false);
+    if (!isActive || prevReelIdRef.current !== reel._id) {
+      setVideoReady(false);
+      prevReelIdRef.current = reel._id;
+    }
   }, [isActive, reel._id]);
 
   const heartScale = useSharedValue(0);
@@ -208,6 +278,7 @@ function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: bo
         />
       ) : (
         <View style={styles.reelVideo}>
+          {/* Thumbnail stays visible until the video is ready — prevents black frame flash */}
           <Image
             source={{ uri: thumbUri || undefined }}
             style={[StyleSheet.absoluteFillObject, { opacity: videoReady ? 0 : 1 }]}
@@ -225,13 +296,19 @@ function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: bo
               opacity: videoReady ? 1 : 0,
             }}
             resizeMode={ResizeMode.COVER}
-            shouldPlay={isActive}
+            shouldPlay={isActive && !isPlaybackPaused}
             isLooping
             isMuted={false}
             useNativeControls={false}
-            onLoadStart={() => setVideoReady(false)}
-            onReadyForDisplay={() => setVideoReady(true)}
+            onLoad={() => setVideoReady(true)}
           />
+
+          {/* Loading spinner while the video is buffering */}
+          {!videoReady && (
+            <View style={styles.videoLoadingOverlay}>
+              <ActivityIndicator size="large" color={Colors.white} />
+            </View>
+          )}
         </View>
       )}
 
@@ -269,12 +346,12 @@ function ReelItem({ reel, isActive, insets, router }: { reel: Reel; isActive: bo
             </Pressable>
             <Pressable
               style={styles.sideAction}
-              onPress={() => router.push({ pathname: '/(screens)/comments', params: { contentType: 'reel', contentId: reel._id } })}
+              onPress={() => onCommentPress(reel._id)}
             >
               <Ionicons name="chatbubble-outline" size={26} color={Colors.white} />
               <Text style={styles.sideActionText}>{compactNumber(reel.commentsCount)}</Text>
             </Pressable>
-            <Pressable style={styles.sideAction}>
+            <Pressable style={styles.sideAction} onPress={() => onSharePress(reel._id)}>
               <Ionicons name="paper-plane-outline" size={26} color={Colors.white} />
               <Text style={styles.sideActionText}>Share</Text>
             </Pressable>
@@ -291,6 +368,12 @@ const styles = StyleSheet.create({
   headerOverlay: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.base },
   headerTitle: { fontFamily: Typography.fontFamily.bold, fontSize: Typography.size.xl, color: Colors.white },
   reelContainer: { width: SCREEN_WIDTH },
+  videoLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 5,
+  },
   reelVideo: { ...StyleSheet.absoluteFillObject },
   doubleTapHeart: { position: 'absolute', top: '40%', alignSelf: 'center', zIndex: 10 },
   bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 300 },

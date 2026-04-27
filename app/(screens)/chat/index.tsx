@@ -1,110 +1,208 @@
-import React, { useState, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import {
-  View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator,
+  View,
+  Text,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../../src/theme/tokens';
 import UserAvatar from '../../../src/components/UserAvatar';
-import * as chatApi from '../../../src/api/chat.api';
+import { useChatStore } from '../../../src/stores/chatStore';
 import { useAuthStore } from '../../../src/stores/authStore';
 import { timeAgo } from '../../../src/utils/formatters';
 import type { Conversation } from '../../../src/api/chat.api';
-import { dedupeDmConversations } from '../../../src/utils/chatConversations';
 
-export default function ChatListScreen() {
+export default function ChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const user = useAuthStore((s) => s.user);
 
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { conversations, isLoading, fetchConversations } = useChatStore();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
 
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      setIsLoading(true);
-      (async () => {
-        try {
-          const result = await chatApi.getConversations(1, 30);
-          if (!cancelled) {
-            setConversations(dedupeDmConversations(result.conversations, user?._id));
-          }
-        } catch (err) {
-          console.error('Failed to load conversations:', err);
-        } finally {
-          if (!cancelled) setIsLoading(false);
-        }
-      })();
-      return () => {
-        cancelled = true;
+  useEffect(() => {
+    fetchConversations();
+  }, [fetchConversations]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await fetchConversations();
+    setIsRefreshing(false);
+  }, [fetchConversations]);
+
+  /** Returns the display name / avatar of the *other* participant in a DM */
+  const getPeer = useCallback(
+    (conv: Conversation) => {
+      if (conv.isGroup) {
+        return { name: conv.groupName ?? 'Group', avatar: null };
+      }
+      const peer = conv.participants.find((p) => p._id !== user?._id) ?? conv.participants[0];
+      return {
+        name: peer?.username ?? 'Unknown',
+        avatar: peer?.profilePicture ?? null,
+        peerId: peer?._id,
+        peerUsername: peer?.username,
       };
-    }, [user?._id]),
+    },
+    [user?._id]
   );
 
-  const renderConversation = useCallback(({ item }: { item: Conversation }) => {
-    const otherUser = item.participants.find((p) => p._id !== user?._id);
-    const displayName = item.isGroup ? (item.groupName || 'Group Chat') : (otherUser?.fullName || 'Unknown');
-    const avatar = item.isGroup ? undefined : otherUser?.profilePicture;
-    const lastMsg = item.lastMessage;
+  const filtered = query.trim()
+    ? conversations.filter((c) => {
+        const peer = getPeer(c);
+        return peer.name.toLowerCase().includes(query.toLowerCase());
+      })
+    : conversations;
 
-    return (
-      <Pressable
-        style={[styles.convRow, { backgroundColor: item.unreadCount > 0 ? colors.surfaceElevated : 'transparent' }]}
-        onPress={() => router.push({ pathname: '/(screens)/chat/[convId]', params: { convId: item._id } })}
-      >
-        <UserAvatar uri={avatar} size="lg" />
-        <View style={styles.convContent}>
-          <Text style={[styles.convName, { color: colors.text, fontFamily: item.unreadCount > 0 ? Typography.fontFamily.bold : Typography.fontFamily.medium }]} numberOfLines={1}>
-            {displayName}
-          </Text>
-          {lastMsg && (
-            <Text style={[styles.convLastMsg, { color: item.unreadCount > 0 ? colors.text : colors.textTertiary }]} numberOfLines={1}>
-              {lastMsg.content?.text || (lastMsg.messageType === 'media' ? '📷 Media' : '')}
-            </Text>
-          )}
-        </View>
-        <View style={styles.convMeta}>
-          {item.lastActivity && (
-            <Text style={[styles.convTime, { color: colors.textTertiary }]}>{timeAgo(item.lastActivity)}</Text>
-          )}
-          {item.unreadCount > 0 && (
-            <View style={styles.unreadBadge}>
-              <Text style={styles.unreadText}>{item.unreadCount}</Text>
+  const renderItem = useCallback(
+    ({ item }: { item: Conversation }) => {
+      const peer = getPeer(item);
+      const hasUnread = item.unreadCount > 0;
+      const lastText = item.lastMessage?.isDeleted
+        ? 'Message deleted'
+        : item.lastMessage?.content?.text ?? '';
+      const fromMe = item.lastMessage?.sender?._id === user?._id;
+      const preview = lastText
+        ? `${fromMe ? 'You: ' : ''}${lastText}`
+        : 'Tap to start chatting';
+
+      return (
+        <Pressable
+          style={({ pressed }) => [
+            styles.row,
+            { backgroundColor: pressed ? colors.surfaceElevated : 'transparent' },
+          ]}
+          onPress={() =>
+            router.push({
+              pathname: '/(screens)/chat/[convId]',
+              params: { convId: item._id },
+            })
+          }
+        >
+          <UserAvatar uri={peer.avatar} size="lg" />
+
+          <View style={styles.rowBody}>
+            <View style={styles.rowTop}>
+              <Text
+                style={[
+                  styles.peerName,
+                  { color: colors.text, fontFamily: hasUnread ? Typography.fontFamily.semiBold : Typography.fontFamily.medium },
+                ]}
+                numberOfLines={1}
+              >
+                {peer.name}
+              </Text>
+              <Text style={[styles.time, { color: hasUnread ? Colors.primary : colors.textTertiary }]}>
+                {item.lastActivity ? timeAgo(item.lastActivity) : ''}
+              </Text>
             </View>
-          )}
-        </View>
-      </Pressable>
-    );
-  }, [user, colors, router]);
+
+            <View style={styles.rowBottom}>
+              <Text
+                style={[
+                  styles.preview,
+                  {
+                    color: hasUnread ? colors.textSecondary : colors.textTertiary,
+                    fontFamily: hasUnread ? Typography.fontFamily.medium : Typography.fontFamily.regular,
+                  },
+                ]}
+                numberOfLines={1}
+              >
+                {preview}
+              </Text>
+              {hasUnread && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {item.unreadCount > 99 ? '99+' : item.unreadCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </Pressable>
+      );
+    },
+    [colors, getPeer, router, user?._id]
+  );
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.sm, borderBottomColor: colors.border }]}>
+      {/* Header */}
+      <View
+        style={[
+          styles.header,
+          { paddingTop: insets.top + Spacing.sm, borderBottomColor: colors.border },
+        ]}
+      >
         <Pressable onPress={() => router.back()} hitSlop={HitSlop.md}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Messages</Text>
-        <Pressable><Ionicons name="create-outline" size={24} color={colors.text} /></Pressable>
+        <Pressable
+          hitSlop={HitSlop.md}
+          onPress={() => {
+            /* future: new-conversation picker */
+          }}
+        >
+          <Ionicons name="create-outline" size={24} color={colors.text} />
+        </Pressable>
       </View>
 
-      {isLoading ? (
-        <View style={styles.center}><ActivityIndicator color={Colors.primary} /></View>
+      {/* Search */}
+      <View style={[styles.searchBar, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+        <Ionicons name="search-outline" size={16} color={colors.textTertiary} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search conversations"
+          placeholderTextColor={colors.textTertiary}
+          value={query}
+          onChangeText={setQuery}
+        />
+        {query.length > 0 && (
+          <Pressable onPress={() => setQuery('')} hitSlop={HitSlop.sm}>
+            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+          </Pressable>
+        )}
+      </View>
+
+      {isLoading && conversations.length === 0 ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={Colors.primary} />
+        </View>
       ) : (
         <FlatList
-          style={{ flex: 1 }}
-          data={conversations}
-          renderItem={renderConversation}
+          data={filtered}
           keyExtractor={(item) => item._id}
-          contentContainerStyle={styles.list}
+          renderItem={renderItem}
+          contentContainerStyle={filtered.length === 0 ? styles.center : styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={Colors.primary}
+            />
+          }
           ListEmptyComponent={
-            <View style={styles.emptyState}>
+            <View style={styles.empty}>
               <Ionicons name="chatbubbles-outline" size={48} color={colors.textTertiary} />
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No conversations yet</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {query ? 'No conversations match your search' : 'No messages yet'}
+              </Text>
+              {!query && (
+                <Text style={[styles.emptyHint, { color: colors.textTertiary }]}>
+                  Start a conversation from a user&apos;s profile
+                </Text>
+              )}
             </View>
           }
         />
@@ -115,18 +213,73 @@ export default function ChatListScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.base, paddingBottom: Spacing.md, borderBottomWidth: 0.5 },
-  headerTitle: { fontFamily: Typography.fontFamily.bold, fontSize: Typography.size.lg },
-  list: { paddingTop: Spacing.sm },
-  convRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.base, paddingVertical: Spacing.md },
-  convContent: { flex: 1, marginLeft: Spacing.md },
-  convName: { fontSize: Typography.size.base, marginBottom: 2 },
-  convLastMsg: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.sm },
-  convMeta: { alignItems: 'flex-end', gap: Spacing.xs },
-  convTime: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs },
-  unreadBadge: { backgroundColor: Colors.primary, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  unreadText: { fontFamily: Typography.fontFamily.bold, fontSize: 11, color: Colors.white },
-  emptyState: { alignItems: 'center', paddingTop: 80, gap: Spacing.md },
-  emptyText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.base },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.sm,
+    borderBottomWidth: 0.5,
+  },
+  headerTitle: {
+    fontSize: Typography.size.lg,
+    fontFamily: Typography.fontFamily.bold,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginHorizontal: Spacing.md,
+    marginVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: Radii.full,
+    borderWidth: 0.5,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: Typography.size.sm,
+    fontFamily: Typography.fontFamily.regular,
+    paddingVertical: 2,
+  },
+  list: { paddingBottom: Spacing.xl },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  empty: { alignItems: 'center', gap: Spacing.sm, paddingTop: Spacing.xxl },
+  emptyText: {
+    fontSize: Typography.size.md,
+    fontFamily: Typography.fontFamily.medium,
+    textAlign: 'center',
+  },
+  emptyHint: {
+    fontSize: Typography.size.sm,
+    fontFamily: Typography.fontFamily.regular,
+    textAlign: 'center',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+  },
+  rowBody: { flex: 1, gap: 2 },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  peerName: { fontSize: Typography.size.md, flex: 1, marginRight: Spacing.xs },
+  time: { fontSize: Typography.size.xs, fontFamily: Typography.fontFamily.regular },
+  preview: { fontSize: Typography.size.sm, flex: 1, marginRight: Spacing.xs },
+  badge: {
+    backgroundColor: Colors.primary,
+    borderRadius: Radii.full,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+  badgeText: {
+    color: Colors.white,
+    fontSize: 11,
+    fontFamily: Typography.fontFamily.bold,
+  },
 });

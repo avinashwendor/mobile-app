@@ -17,14 +17,14 @@ export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const login = useAuthStore((s) => s.login);
 
-  const [usernameOrEmail, setUsernameOrEmail] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const passwordRef = useRef<TextInput>(null);
 
-  const canSubmit = usernameOrEmail.trim().length >= 3 && password.length >= 6;
+  const canSubmit = email.trim().length >= 3 && password.length >= 6;
 
   const handleLogin = useCallback(async () => {
     if (!canSubmit || isLoading) return;
@@ -32,15 +32,19 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      await login(usernameOrEmail.trim(), password);
+      await login(email.trim(), password);
       // Auth guard in _layout.tsx will redirect to tabs
     } catch (err: any) {
-      const message = err?.response?.data?.message || 'Login failed. Please try again.';
+      const message =
+        err?.message ||
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        'Login failed. Please try again.';
       setError(message);
     } finally {
       setIsLoading(false);
     }
-  }, [usernameOrEmail, password, canSubmit, isLoading, login]);
+  }, [email, password, canSubmit, isLoading, login]);
 
   return (
     <LinearGradient colors={['#0A0A0F', '#121225', '#0A0A0F']} style={styles.container}>
@@ -71,19 +75,20 @@ export default function LoginScreen() {
               </View>
             ) : null}
 
-            {/* Username or Email */}
+            {/* Email */}
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Username or Email</Text>
+              <Text style={styles.label}>Email</Text>
               <View style={styles.inputWrapper}>
                 <Ionicons name="person-outline" size={18} color={Colors.dark.textTertiary} style={styles.inputIcon} />
                 <TextInput
-                  value={usernameOrEmail}
-                  onChangeText={setUsernameOrEmail}
-                  placeholder="Enter username or email"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="Enter email address"
                   placeholderTextColor={Colors.dark.textTertiary}
                   style={styles.input}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  keyboardType="email-address"
                   returnKeyType="next"
                   onSubmitEditing={() => passwordRef.current?.focus()}
                 />

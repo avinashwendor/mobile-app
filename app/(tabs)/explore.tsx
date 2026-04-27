@@ -162,6 +162,7 @@ export default function ExploreScreen() {
       {isSearchMode ? (
         /* Search results */
         <FlatList
+          key="search-results"
           data={searchResults}
           renderItem={renderSearchResult}
           keyExtractor={(item) => item._id}
@@ -182,6 +183,7 @@ export default function ExploreScreen() {
           </View>
         ) : (
           <FlatList
+            key="explore-grid"
             data={posts}
             renderItem={renderGridItem}
             keyExtractor={(item) => item._id}

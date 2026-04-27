@@ -67,6 +67,42 @@ export async function sendMessage(conversationId: string, text: string): Promise
   return mapChatMessage(unwrap<any>(res));
 }
 
+export async function sendStoryReply(
+  conversationId: string,
+  storyId: string,
+  text: string,
+): Promise<ChatMessage> {
+  const replyText = text.trim();
+  const res = await apiClient.post(`/chat/conversations/${conversationId}/messages`, {
+    type: 'story_reply',
+    content: {
+      text: replyText,
+      shared_content_id: storyId,
+      shared_content_type: 'story',
+    },
+  });
+  return mapChatMessage(unwrap<any>(res));
+}
+
+export async function sendContentShare(payload: {
+  conversationId: string;
+  contentType: 'post' | 'reel';
+  contentId: string;
+  commentId?: string;
+  text?: string;
+}): Promise<ChatMessage> {
+  const res = await apiClient.post(`/chat/conversations/${payload.conversationId}/messages`, {
+    type: payload.contentType === 'reel' ? 'reel_share' : 'post_share',
+    content: {
+      text: payload.text,
+      shared_content_id: payload.contentId,
+      shared_content_type: payload.contentType,
+      shared_comment_id: payload.commentId,
+    },
+  });
+  return mapChatMessage(unwrap<any>(res));
+}
+
 export async function markConversationRead(conversationId: string): Promise<void> {
   await apiClient.post(`/chat/conversations/${conversationId}/read`, {});
 }

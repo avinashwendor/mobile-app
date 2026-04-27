@@ -63,6 +63,7 @@ export interface MobileUser {
   coverPicture: string;
   bio: string;
   website: string;
+  socialLinks: string[];
   isVerified: boolean;
   isPrivate: boolean;
   accountType: string;
@@ -80,6 +81,7 @@ export interface MobileUser {
 export const mapUser = (u: any): MobileUser => {
   if (!u) return u;
   const id = pick<string>(u._id, u.id) ?? '';
+  const socialLinks = pick<any[]>(u.socialLinks, u.social_links);
   return {
     _id: String(id),
     username: u.username ?? '',
@@ -89,6 +91,7 @@ export const mapUser = (u: any): MobileUser => {
     coverPicture: pick(u.coverPicture, u.cover_url, u.coverUrl) ?? '',
     bio: u.bio ?? '',
     website: u.website ?? '',
+    socialLinks: Array.isArray(socialLinks) ? socialLinks.map((link) => String(link)).filter(Boolean) : [],
     isVerified: Boolean(pick(u.isVerified, u.is_verified)),
     isPrivate: Boolean(pick(u.isPrivate, u.is_private)),
     accountType: pick(u.accountType, u.account_type) ?? 'personal',
@@ -176,10 +179,14 @@ export const mapPost = (p: any): MobilePost => {
 export interface MobileStory {
   _id: string;
   author: MobileUser;
-  media: { type: 'image' | 'video'; url: string; thumbnail?: string } | null;
+  media: { type: 'image' | 'video'; url: string; thumbnail?: string; durationMs?: number } | null;
   text: { content: string } | null;
+  audioTrack: { _id: string; title: string; artist: string; audioUrl: string; coverUrl?: string; durationMs: number } | null;
   visibility: 'public' | 'followers' | 'close-friends';
   viewsCount: number;
+  likesCount: number;
+  reactionsCount: number;
+  likedByMe: boolean;
   hasViewed: boolean;
   createdAt: string;
   expiresAt: string;
@@ -189,6 +196,9 @@ export const mapStory = (s: any): MobileStory => {
   const authorRaw = s.author ?? s.user_id ?? s.user ?? {};
   const createdAt = pick(s.createdAt, s.created_at) ?? new Date().toISOString();
   const rawMedia = Array.isArray(s.media) ? s.media[0] : s.media;
+  const captionText = pick(s.text?.content, s.text, s.caption, s.content);
+  const durationRaw = Number(pick(rawMedia?.duration, s.duration, s.mediaDuration, s.media_duration) ?? 0);
+  const reactions = Array.isArray(s.reactions) ? s.reactions : [];
   return {
     _id: String(pick(s._id, s.id) ?? ''),
     author: mapUser(authorRaw),
@@ -197,11 +207,27 @@ export const mapStory = (s: any): MobileStory => {
           type: (rawMedia.type ?? 'image') as 'image' | 'video',
           url: normalizeMediaUrl(rawMedia),
           thumbnail: pick(rawMedia.thumbnail, rawMedia.thumbnail_url) ?? undefined,
+          durationMs: durationRaw > 0 ? Math.round(durationRaw * 1000) : undefined,
         }
       : null,
-    text: s.text ? { content: s.text.content ?? String(s.text) } : null,
+    text: captionText ? { content: String(captionText) } : null,
+    audioTrack: (() => {
+      const raw = s.audio_track_id ?? s.audioTrack ?? s.audio_track ?? null;
+      if (!raw || typeof raw !== 'object') return null;
+      return {
+        _id: String(raw._id ?? raw.id ?? ''),
+        title: String(raw.title ?? 'Unknown'),
+        artist: String(raw.artist ?? 'Unknown'),
+        audioUrl: String(raw.audio_url ?? raw.audioUrl ?? ''),
+        coverUrl: raw.cover_url ?? raw.coverUrl ?? undefined,
+        durationMs: Math.round(Number(raw.duration ?? 0) * 1000),
+      };
+    })(),
     visibility: (s.visibility ?? 'public') as MobileStory['visibility'],
     viewsCount: Number(pick(s.viewsCount, s.views_count, s.view_count, Array.isArray(s.viewers) ? s.viewers.length : 0) ?? 0),
+    likesCount: Number(pick(s.likesCount, s.likes_count, reactions.filter((reaction: any) => reaction?.emoji === '❤️').length) ?? 0),
+    reactionsCount: Number(pick(s.reactionsCount, s.reactions_count, reactions.length) ?? 0),
+    likedByMe: Boolean(pick(s.likedByMe, s.liked_by_me)),
     hasViewed: Boolean(pick(s.hasViewed, s.has_viewed)),
     createdAt: String(createdAt),
     expiresAt: String(pick(s.expiresAt, s.expires_at) ?? createdAt),
@@ -242,6 +268,7 @@ export const mapComment = (c: any): MobileComment => {
     isEdited: Boolean(pick(c.isEdited, c.is_edited)),
     isPinned: Boolean(pick(c.isPinned, c.is_pinned)),
     createdAt: String(createdAt),
+    replies: Array.isArray(c.replies) ? c.replies.map(mapComment) : undefined,
   };
 };
 
@@ -254,19 +281,36 @@ export interface MobileNotification {
   message: string;
   contentType?: string;
   contentId?: string;
+  commentId?: string;
   isRead: boolean;
   createdAt: string;
 }
 
 export const mapNotification = (n: any): MobileNotification => {
   const sender = n.sender ?? n.sender_id ?? n.from_user ?? {};
+  const content = n.content ?? {};
+  const resolvedContentType = pick(
+    n.contentType,
+    n.content_type,
+    content.content_type,
+    content.target_type,
+  );
+  const resolvedContentId = pick(
+    n.contentId,
+    n.content_id,
+    content.content_id,
+    content.target_id,
+  );
   return {
     _id: String(pick(n._id, n.id) ?? ''),
     sender: mapUser(sender),
     type: n.type ?? 'generic',
-    message: n.message ?? n.text ?? '',
-    contentType: pick(n.contentType, n.content_type),
-    contentId: pick(n.contentId, n.content_id),
+    message: n.message ?? n.text ?? content.text ?? '',
+    contentType: resolvedContentType ? String(resolvedContentType) : undefined,
+    contentId: resolvedContentId ? String(resolvedContentId) : undefined,
+    commentId: pick(n.commentId, n.comment_id, content.comment_id)
+      ? String(pick(n.commentId, n.comment_id, content.comment_id))
+      : undefined,
     isRead: Boolean(pick(n.isRead, n.is_read)),
     createdAt: String(pick(n.createdAt, n.created_at) ?? new Date().toISOString()),
   };
@@ -281,8 +325,14 @@ export interface MobileChatParticipant extends MobileUser {
 export interface MobileChatMessage {
   _id: string;
   sender: MobileUser;
-  content: { text?: string; media?: { type: 'image' | 'video'; url: string; filename?: string } };
-  messageType: 'text' | 'media' | 'system' | 'post_share';
+  content: {
+    text?: string;
+    media?: { type: 'image' | 'video'; url: string; filename?: string };
+    sharedContentId?: string;
+    sharedContentType?: 'post' | 'reel' | 'story';
+    sharedCommentId?: string;
+  };
+  messageType: 'text' | 'media' | 'system' | 'post_share' | 'reel_share' | 'story_reply';
   readBy: { user: string; readAt: string }[];
   isDeleted: boolean;
   createdAt: string;
@@ -327,6 +377,15 @@ export const mapChatMessage = (m: any): MobileChatMessage => {
             url: normalizeMediaUrl(rawContent.media),
             filename: rawContent.media.filename,
           }
+        : undefined,
+      sharedContentId: pick(rawContent.sharedContentId, rawContent.shared_content_id)
+        ? String(pick(rawContent.sharedContentId, rawContent.shared_content_id))
+        : undefined,
+      sharedContentType: pick(rawContent.sharedContentType, rawContent.shared_content_type)
+        ? String(pick(rawContent.sharedContentType, rawContent.shared_content_type)) as MobileChatMessage['content']['sharedContentType']
+        : undefined,
+      sharedCommentId: pick(rawContent.sharedCommentId, rawContent.shared_comment_id)
+        ? String(pick(rawContent.sharedCommentId, rawContent.shared_comment_id))
         : undefined,
     },
     messageType: (m.type ?? m.messageType ?? 'text') as MobileChatMessage['messageType'],

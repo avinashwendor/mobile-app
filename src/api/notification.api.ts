@@ -42,3 +42,21 @@ export async function markAllRead(): Promise<void> {
 export async function deleteNotification(notificationId: string): Promise<void> {
   await apiClient.delete(`/notifications/${notificationId}`);
 }
+
+export async function registerPushToken(
+  token: string,
+  platform: 'ios' | 'android',
+  deviceName?: string,
+): Promise<void> {
+  await apiClient.put('/notifications/push-token', {
+    token,
+    platform,
+    device_name: deviceName,
+  });
+}
+
+export async function unregisterPushToken(token: string): Promise<void> {
+  await apiClient.delete('/notifications/push-token', {
+    data: { token },
+  });
+}

@@ -128,7 +128,7 @@ export default function PromotionsScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Promotions</Text>
-        <Pressable hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <Pressable hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={() => router.push('/(screens)/create-campaign')}>
           <Ionicons name="add-circle-outline" size={24} color={Colors.primary} />
         </Pressable>
       </View>
@@ -195,7 +195,7 @@ export default function PromotionsScreen() {
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 Boost a post or reel to reach a larger audience with your first promotion.
               </Text>
-              <Pressable style={styles.emptyCTA}>
+              <Pressable style={styles.emptyCTA} onPress={() => router.push('/(screens)/create-campaign')}>
                 <LinearGradient colors={[...Colors.gradientPrimary]} style={styles.emptyCTAGradient}>
                   <Ionicons name="add-circle-outline" size={18} color={Colors.white} />
                   <Text style={styles.emptyCTAText}>Create a campaign</Text>
@@ -218,6 +218,9 @@ export default function PromotionsScreen() {
               <Animated.View
                 key={ad.id}
                 entering={FadeInDown.delay(150 + index * 80)}
+              >
+              <Pressable
+                onPress={() => router.push({ pathname: '/(screens)/campaign-detail', params: { campaignId: ad.id } })}
                 style={[styles.adCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
               >
                 <View style={styles.adTop}>
@@ -266,12 +269,13 @@ export default function PromotionsScreen() {
                   <MetricItem label="Clicks" value={compactNumber(ad.clicks)} colors={colors} />
                   <MetricItem label="CTR" value={`${(ad.engagement * 100).toFixed(1)}%`} colors={colors} />
                 </View>
+              </Pressable>
               </Animated.View>
             );
           })}
 
           <Animated.View entering={FadeInDown.delay(500)}>
-            <Pressable style={styles.promoteCTA}>
+            <Pressable style={styles.promoteCTA} onPress={() => router.push('/(screens)/create-campaign')}>
               <LinearGradient colors={[...Colors.gradientPrimary]} style={styles.promoteGradient}>
                 <Ionicons name="megaphone" size={20} color={Colors.white} />
                 <Text style={styles.promoteText}>Promote a Post</Text>

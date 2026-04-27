@@ -8,17 +8,24 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, HitSlop } from '../../../src/theme/tokens';
 import { PostCard } from '../../../src/components/PostCard';
+import CommentsSheet from '../../../src/components/comments/CommentsSheet';
+import ShareSheet from '../../../src/components/ShareSheet';
 import * as postApi from '../../../src/api/post.api';
 import type { Post } from '../../../src/api/post.api';
 
 export default function PostDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; openComments?: string | string[]; commentId?: string | string[] }>();
+  const id = params.id;
+  const openCommentsParam = Array.isArray(params.openComments) ? params.openComments[0] : params.openComments;
+  const highlightCommentId = Array.isArray(params.commentId) ? params.commentId[0] : params.commentId;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
   const [post, setPost] = useState<Post | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isCommentsOpen, setIsCommentsOpen] = useState(openCommentsParam === '1');
+  const [isShareOpen, setIsShareOpen] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -33,6 +40,12 @@ export default function PostDetailScreen() {
       }
     })();
   }, [id]);
+
+  useEffect(() => {
+    if (openCommentsParam === '1') {
+      setIsCommentsOpen(true);
+    }
+  }, [openCommentsParam]);
 
   if (isLoading) {
     return (
@@ -64,12 +77,28 @@ export default function PostDetailScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         <PostCard
           post={post}
-          onComment={(pid) => router.push({ pathname: '/(screens)/comments', params: { contentType: 'post', contentId: pid } })}
-          onShare={() => {}}
+          onComment={(_postId) => setIsCommentsOpen(true)}
+          onShare={() => setIsShareOpen(true)}
           onUserPress={(uname) => router.push({ pathname: '/(screens)/user/[id]', params: { id: uname } })}
           onPostPress={() => {}}
         />
       </ScrollView>
+
+      <CommentsSheet
+        visible={isCommentsOpen}
+        contentType="post"
+        contentId={post._id}
+        onClose={() => setIsCommentsOpen(false)}
+        initialExpanded={false}
+        highlightCommentId={highlightCommentId}
+      />
+
+      <ShareSheet
+        visible={isShareOpen}
+        onClose={() => setIsShareOpen(false)}
+        contentType="post"
+        contentId={post._id}
+      />
     </View>
   );
 }

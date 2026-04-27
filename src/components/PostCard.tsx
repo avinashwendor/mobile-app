@@ -1,6 +1,6 @@
 import React, { useState, useCallback, memo, useEffect } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, Dimensions,
+  View, Text, Pressable, ScrollView, StyleSheet, Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -56,6 +56,13 @@ function PostCardComponent({
   const heartScale = useSharedValue(0);
   const heartOpacity = useSharedValue(0);
   const likeButtonScale = useSharedValue(1);
+
+  const [mediaIndex, setMediaIndex] = useState(0);
+
+  const onCarouselScroll = useCallback((e: any) => {
+    const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
+    setMediaIndex(idx);
+  }, []);
 
   const heartAnimStyle = useAnimatedStyle(() => ({
     transform: [{ scale: heartScale.value }],
@@ -136,10 +143,12 @@ function PostCardComponent({
     }
   };
 
+  const mediaCount = post.media.length;
   const firstMedia = post.media[0];
   const mediaHeight = firstMedia?.height && firstMedia?.width
     ? (firstMedia.height / firstMedia.width) * SCREEN_WIDTH
     : SCREEN_WIDTH;
+  const clampedHeight = Math.min(mediaHeight, SCREEN_WIDTH * 1.25);
 
   return (
     <View style={[styles.container, { borderBottomColor: colors.border }]}>
@@ -164,18 +173,46 @@ function PostCardComponent({
         </Pressable>
       </Pressable>
 
-      {/* Media */}
-      <Pressable onPress={handleDoubleTap}>
-        <Image
-          source={{ uri: firstMedia?.url }}
-          style={[styles.media, { height: Math.min(mediaHeight, SCREEN_WIDTH * 1.25), backgroundColor: colors.surfaceElevated }]}
-          contentFit="cover"
-          transition={300}
-        />
-        <Animated.View style={[styles.heartOverlay, heartAnimStyle]}>
+      {/* Media carousel */}
+      <View style={{ height: clampedHeight, backgroundColor: colors.surfaceElevated }}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          scrollEnabled={mediaCount > 1}
+          onScroll={onCarouselScroll}
+          scrollEventThrottle={16}
+          bounces={false}
+        >
+          {post.media.map((item, i) => (
+            <Pressable key={i} style={[styles.mediaItem, { height: clampedHeight }]} onPress={handleDoubleTap}>
+              <Image
+                source={{ uri: item.url }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={300}
+              />
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Animated.View style={[styles.heartOverlay, heartAnimStyle]} pointerEvents="none">
           <Ionicons name="heart" size={80} color={Colors.white} />
         </Animated.View>
-      </Pressable>
+        {mediaCount > 1 && (
+          <View style={styles.mediaCounter}>
+            <Text style={styles.mediaCounterText}>{mediaIndex + 1}/{mediaCount}</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Dot indicators for carousel */}
+      {mediaCount > 1 && (
+        <View style={styles.dotRow}>
+          {post.media.map((_, i) => (
+            <View key={i} style={[styles.dot, i === mediaIndex && styles.dotActive]} />
+          ))}
+        </View>
+      )}
 
       {/* Action Bar */}
       <View style={styles.actionBar}>
@@ -237,6 +274,16 @@ const styles = StyleSheet.create({
   verifiedIcon: { marginLeft: 4 },
   time: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, marginTop: 1 },
   media: { width: SCREEN_WIDTH },
+  mediaItem: { width: SCREEN_WIDTH, overflow: 'hidden' },
+  mediaCounter: {
+    position: 'absolute', top: Spacing.sm, right: Spacing.sm,
+    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: Radii.full,
+    paddingHorizontal: Spacing.sm, paddingVertical: 3,
+  },
+  mediaCounterText: { color: Colors.white, fontSize: 12, fontFamily: Typography.fontFamily.semiBold },
+  dotRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, paddingVertical: Spacing.xs },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(0,0,0,0.18)' },
+  dotActive: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: Colors.primary },
   heartOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
   actionBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
   leftActions: { flexDirection: 'row', alignItems: 'center' },

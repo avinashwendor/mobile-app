@@ -9,24 +9,31 @@ import { mapComment, unwrap, type MobileComment } from './adapters';
 
 export type Comment = MobileComment;
 
+const pageState = new Map<string, string | null>();
+
 const collectionPathFor = (contentType: 'post' | 'reel', contentId: string): string => {
   return contentType === 'post'
     ? `/posts/${contentId}/comments`
     : `/reels/${contentId}/comments`;
 };
 
+const commentsPageKey = (contentType: 'post' | 'reel', contentId: string) => `comments:${contentType}:${contentId}`;
+const repliesPageKey = (commentId: string) => `replies:${commentId}`;
+
 /** GET comments for a post or reel (cursor paginated). */
 export async function getComments(
   contentType: 'post' | 'reel',
   contentId: string,
-  _page = 1,
+  page = 1,
   limit = 20,
   _sort: 'newest' | 'oldest' | 'popular' = 'newest',
 ): Promise<{ comments: Comment[]; hasMore: boolean }> {
+  const cursor = page === 1 ? undefined : pageState.get(commentsPageKey(contentType, contentId)) ?? undefined;
   const { data } = await apiClient.get(collectionPathFor(contentType, contentId), {
-    params: { limit },
+    params: { cursor, limit },
   });
   const list = Array.isArray(data.data) ? data.data : [];
+  pageState.set(commentsPageKey(contentType, contentId), data.meta?.cursor ?? null);
   return {
     comments: list.map((c: any) =>
       mapComment({ ...c, contentType, contentId }),
@@ -58,11 +65,13 @@ export async function createComment(payload: {
 /** GET /comments/:commentId/replies */
 export async function getCommentReplies(
   commentId: string,
-  _page = 1,
+  page = 1,
   limit = 20,
 ): Promise<{ replies: Comment[]; hasMore: boolean }> {
-  const { data } = await apiClient.get(`/comments/${commentId}/replies`, { params: { limit } });
+  const cursor = page === 1 ? undefined : pageState.get(repliesPageKey(commentId)) ?? undefined;
+  const { data } = await apiClient.get(`/comments/${commentId}/replies`, { params: { cursor, limit } });
   const list = Array.isArray(data.data) ? data.data : [];
+  pageState.set(repliesPageKey(commentId), data.meta?.cursor ?? null);
   return {
     replies: list.map(mapComment),
     hasMore: Boolean(data.meta?.has_more),

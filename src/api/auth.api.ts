@@ -65,25 +65,18 @@ export async function register(payload: RegisterPayload): Promise<AuthResult> {
 
 /**
  * POST /auth/login — backend expects `{ email, password }` only.
- * The login form accepts either a username or email, so if the value does
- * not contain an `@` we treat it as a username and resolve it to an email
- * via a secondary lookup.
+ * Backend does not expose a public username->email resolver for unauthenticated
+ * users, so login must use an email address.
  */
 export async function login(payload: LoginPayload): Promise<AuthResult> {
   const identifier = payload.usernameOrEmail.trim();
-  let email = identifier.toLowerCase();
-
   if (!identifier.includes('@')) {
-    // Username login — the backend /users/search is the only public lookup
-    // that can resolve a username → email pairing.
-    const search = await apiClient.get('/users/search', { params: { q: identifier, limit: 1 } });
-    const users = (search.data?.data ?? []) as any[];
-    const match = users.find((u) => (u.username ?? '').toLowerCase() === identifier.toLowerCase());
-    if (!match || !match.email) {
-      throw Object.assign(new Error('Invalid username or password'), { code: 'UNAUTHORIZED', status: 401 });
-    }
-    email = match.email;
+    throw Object.assign(new Error('Please login with your email address.'), {
+      code: 'VALIDATION_ERROR',
+      status: 422,
+    });
   }
+  const email = identifier.toLowerCase();
 
   const res = await apiClient.post('/auth/login', { email, password: payload.password });
   const data = unwrap<any>(res);
@@ -108,12 +101,13 @@ export async function getMe(): Promise<MobileUser> {
 /** PUT /users/me — update profile fields */
 export async function updateProfile(updates: Partial<{
   fullName: string; bio: string; website: string; location: string;
-  isPrivate: boolean; accountType: string;
+  socialLinks: string[]; isPrivate: boolean; accountType: string;
 }>): Promise<MobileUser> {
   const res = await apiClient.put('/users/me', {
     display_name: updates.fullName,
     bio: updates.bio,
     website: updates.website,
+    social_links: updates.socialLinks,
     location: updates.location,
     is_private: updates.isPrivate,
     account_type: updates.accountType,

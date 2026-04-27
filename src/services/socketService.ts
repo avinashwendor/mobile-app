@@ -115,6 +115,14 @@ class SocketService {
   leaveChannel(channelId: string): void {
     this.emit('leave_channel', { channel_id: channelId });
   }
+
+  joinContent(contentType: 'post' | 'reel', contentId: string): void {
+    this.emit('join_content', { content_type: contentType, content_id: contentId });
+  }
+
+  leaveContent(contentType: 'post' | 'reel', contentId: string): void {
+    this.emit('leave_content', { content_type: contentType, content_id: contentId });
+  }
 }
 
 /** Singleton instance — import and use across the app */

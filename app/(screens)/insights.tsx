@@ -6,36 +6,17 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii } from '../../src/theme/tokens';
 import { useAuthStore } from '../../src/stores/authStore';
-import apiClient from '../../src/api/client';
+import analyticsApi, { type AnalyticsRow, type ProfileSummary, type TopContentItem } from '../../src/api/analytics.api';
 import { compactNumber } from '../../src/utils/formatters';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_DAYS = 30;
-
-interface AnalyticsEngagement {
-  likes_received?: number;
-  comments_received?: number;
-  shares_received?: number;
-  saves_received?: number;
-}
-
-interface AnalyticsRow {
-  date: string;
-  profile_visits?: number;
-  impressions?: number;
-  reach?: number;
-  engagement?: AnalyticsEngagement;
-  followers_gained?: number;
-  followers_lost?: number;
-  story_views?: number;
-  reel_views?: number;
-}
 
 interface AggregatedAnalytics {
   totalReach: number;
@@ -46,6 +27,8 @@ interface AggregatedAnalytics {
   totalSaves: number;
   followersGrowth: number;
   profileVisits: number;
+  storyViews: number;
+  reelViews: number;
   engagementRate: number;
 }
 
@@ -58,6 +41,8 @@ const EMPTY_AGGREGATE: AggregatedAnalytics = {
   totalSaves: 0,
   followersGrowth: 0,
   profileVisits: 0,
+  storyViews: 0,
+  reelViews: 0,
   engagementRate: 0,
 };
 
@@ -72,6 +57,8 @@ const aggregate = (rows: AnalyticsRow[]): AggregatedAnalytics => {
   let followersGained = 0;
   let followersLost = 0;
   let profileVisits = 0;
+  let storyViews = 0;
+  let reelViews = 0;
 
   for (const row of rows) {
     totalReach += Number(row.reach ?? 0);
@@ -83,11 +70,11 @@ const aggregate = (rows: AnalyticsRow[]): AggregatedAnalytics => {
     followersGained += Number(row.followers_gained ?? 0);
     followersLost += Number(row.followers_lost ?? 0);
     profileVisits += Number(row.profile_visits ?? 0);
+    storyViews += Number(row.story_views ?? 0);
+    reelViews += Number(row.reel_views ?? 0);
   }
 
   const totalEngagement = totalLikes + totalComments + totalShares + totalSaves;
-  // Engagement rate is engagement / reach when reach is available; fall back
-  // to impressions if reach isn't tracked yet.
   const denominator = totalReach > 0 ? totalReach : totalImpressions;
   const engagementRate = denominator > 0 ? totalEngagement / denominator : 0;
 
@@ -100,6 +87,8 @@ const aggregate = (rows: AnalyticsRow[]): AggregatedAnalytics => {
     totalSaves,
     followersGrowth: followersGained - followersLost,
     profileVisits,
+    storyViews,
+    reelViews,
     engagementRate,
   };
 };
@@ -111,19 +100,19 @@ export default function InsightsScreen() {
   const user = useAuthStore((s) => s.user);
 
   const [rows, setRows] = useState<AnalyticsRow[]>([]);
+  const [summary, setSummary] = useState<ProfileSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchAnalytics = useCallback(async () => {
     try {
-      const { data } = await apiClient.get<{ success: boolean; data: AnalyticsRow[] }>('/analytics/me', {
-        params: {
-          start_date: new Date(Date.now() - WINDOW_DAYS * DAY_MS).toISOString(),
-          end_date: new Date().toISOString(),
-        },
-      });
-      setRows(Array.isArray(data.data) ? data.data : []);
+      const [analyticsRows, profileSummary] = await Promise.all([
+        analyticsApi.getMyAnalytics(WINDOW_DAYS),
+        analyticsApi.getProfileSummary(),
+      ]);
+      setRows(analyticsRows);
+      setSummary(profileSummary);
       setError(null);
     } catch {
       setRows([]);
@@ -237,7 +226,42 @@ export default function InsightsScreen() {
           </View>
         </Animated.View>
 
+        {/* Content Breakdown */}
         <Animated.View entering={FadeInDown.delay(600)}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Content Breakdown</Text>
+          <View style={[styles.infoCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+            <InfoRow label="Story Views" value={compactNumber(totals.storyViews)} colors={colors} />
+            <InfoRow label="Reel Views" value={compactNumber(totals.reelViews)} colors={colors} />
+            <InfoRow label="Total Impressions" value={compactNumber(totals.totalImpressions)} colors={colors} isLast />
+          </View>
+        </Animated.View>
+
+        {/* Top Content */}
+        {summary && summary.topContent.length > 0 && (
+          <Animated.View entering={FadeInDown.delay(650)}>
+            <View style={styles.sectionRow}>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Content</Text>
+              <Text style={[styles.sectionSub, { color: colors.textTertiary }]}>Last 30 days</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.topContentScroll} contentContainerStyle={{ paddingRight: Spacing.base }}>
+              {summary.topContent.map((item, idx) => (
+                <TopContentCard
+                  key={item.content_id + idx}
+                  item={item}
+                  colors={colors}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/(screens)/content-insights',
+                      params: { type: item.content_type, id: item.content_id },
+                    })
+                  }
+                />
+              ))}
+            </ScrollView>
+          </Animated.View>
+        )}
+
+        <Animated.View entering={FadeInDown.delay(700)}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Actions</Text>
           <View style={styles.actionsRow}>
             <ActionCard icon="add-circle-outline" label="Create Post" color={Colors.primary} onPress={() => router.push('/(tabs)/create')} colors={colors} />
@@ -257,6 +281,31 @@ export default function InsightsScreen() {
         </Animated.View>
       </ScrollView>
     </View>
+  );
+}
+
+function TopContentCard({ item, colors, onPress }: { item: TopContentItem; colors: any; onPress: () => void }) {
+  const typeColor = item.content_type === 'reel' ? Colors.coral : Colors.primary;
+  return (
+    <Pressable
+      style={[styles.topContentCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
+      onPress={onPress}
+    >
+      {item.thumbnail_url ? (
+        <Image source={{ uri: item.thumbnail_url }} style={styles.topContentThumb} contentFit="cover" />
+      ) : (
+        <View style={[styles.topContentThumb, { backgroundColor: typeColor + '20', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name={item.content_type === 'reel' ? 'videocam' : 'image'} size={24} color={typeColor} />
+        </View>
+      )}
+      <View style={[styles.topContentBadge, { backgroundColor: typeColor }]}>
+        <Text style={styles.topContentBadgeText}>{item.content_type.charAt(0).toUpperCase() + item.content_type.slice(1)}</Text>
+      </View>
+      <View style={styles.topContentMeta}>
+        <Text style={[styles.topContentViews, { color: colors.text }]}>{compactNumber(item.views)} views</Text>
+        <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -317,7 +366,16 @@ const styles = StyleSheet.create({
   engagementStat: { width: '50%', paddingVertical: Spacing.sm },
   engagementStatValue: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.md },
   engagementStatLabel: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, marginTop: 2 },
-  sectionTitle: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.md, marginBottom: Spacing.md },
+  sectionTitle: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.md, marginBottom: Spacing.sm },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.sm },
+  sectionSub: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs },
+  topContentScroll: { marginBottom: Spacing.xl },
+  topContentCard: { width: 130, borderRadius: Radii.lg, borderWidth: 1, overflow: 'hidden', marginRight: Spacing.sm },
+  topContentThumb: { width: 130, height: 100 },
+  topContentBadge: { position: 'absolute', top: Spacing.xs, left: Spacing.xs, borderRadius: Radii.sm, paddingHorizontal: Spacing.xs, paddingVertical: 2 },
+  topContentBadgeText: { fontFamily: Typography.fontFamily.semiBold, fontSize: 10, color: '#fff' },
+  topContentMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.sm, paddingVertical: Spacing.xs },
+  topContentViews: { fontFamily: Typography.fontFamily.medium, fontSize: Typography.size.xs },
   actionsRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.xl },
   actionCard: { flex: 1, borderRadius: Radii.lg, padding: Spacing.base, alignItems: 'center', gap: Spacing.sm, borderWidth: 1 },
   actionIconBg: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },

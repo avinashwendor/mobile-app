@@ -52,7 +52,15 @@
           "photosPermission": "Allow INSTAYT to access your photos to share posts, stories, and reels."
         }
       ],
-      "expo-font"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#0A0A0F"
+        }
+      ],
+      "expo-font",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

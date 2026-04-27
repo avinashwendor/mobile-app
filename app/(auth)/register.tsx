@@ -29,11 +29,14 @@ export default function RegisterScreen() {
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
 
+  const usernameValue = username.trim().toLowerCase();
+  const emailValue = email.trim().toLowerCase();
+
   const canSubmit =
     fullName.trim().length >= 1 &&
-    username.trim().length >= 3 &&
-    email.includes('@') &&
-    password.length >= 6;
+    usernameValue.length >= 1 &&
+    emailValue.length >= 1 &&
+    password.length >= 1;
 
   const handleRegister = useCallback(async () => {
     if (!canSubmit || isLoading) return;
@@ -43,17 +46,29 @@ export default function RegisterScreen() {
     try {
       await register({
         fullName: fullName.trim(),
-        username: username.trim().toLowerCase(),
-        email: email.trim().toLowerCase(),
+        username: usernameValue,
+        email: emailValue,
         password,
       });
     } catch (err: any) {
-      const message = err?.response?.data?.message || 'Registration failed. Please try again.';
+      const firstDetail =
+        Array.isArray(err?.details) && err.details.length > 0
+          ? err.details[0]?.issue
+          : Array.isArray(err?.response?.data?.error?.details) &&
+              err.response.data.error.details.length > 0
+            ? err.response.data.error.details[0]?.issue
+            : '';
+      const message =
+        firstDetail ||
+        err?.message ||
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        'Registration failed. Please try again.';
       setError(message);
     } finally {
       setIsLoading(false);
     }
-  }, [fullName, username, email, password, canSubmit, isLoading, register]);
+  }, [fullName, usernameValue, emailValue, password, canSubmit, isLoading, register]);
 
   return (
     <LinearGradient colors={['#0A0A0F', '#121225', '#0A0A0F']} style={styles.container}>
@@ -93,7 +108,7 @@ export default function RegisterScreen() {
                   ref={passwordRef}
                   value={password}
                   onChangeText={setPassword}
-                  placeholder="Min 6 characters"
+                  placeholder="8+ chars, upper/lower/number/symbol"
                   placeholderTextColor={Colors.dark.textTertiary}
                   style={styles.input}
                   secureTextEntry={!showPassword}

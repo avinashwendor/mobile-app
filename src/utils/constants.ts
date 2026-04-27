@@ -27,8 +27,9 @@ const host = resolveDevHost();
 
 /** Base URL for REST requests — mounts under `/api/v1` on the backend */
 export const API_BASE_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com/api/v1`;
-
+// export const API_BASE_URL = `http://${`192.168.0.228`}:${DEFAULT_DEV_PORT}/api/v1`;
 /** WebSocket endpoint served by the same HTTP server (Socket.IO) */
+// export const WS_URL = `http://${`192.168.0.228`}:${DEFAULT_DEV_PORT}`;
 export const WS_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com`;
 
 export const NOTIFICATION_TYPES = {
@@ -45,6 +46,7 @@ export const NOTIFICATION_TYPES = {
 export const STORAGE_KEYS = {
   TOKEN: '@instayt/token',
   REFRESH_TOKEN: '@instayt/refresh_token',
+  PUSH_TOKEN: '@instayt/push_token',
   USER: '@instayt/user',
   THEME_MODE: '@instayt/theme_mode',
 } as const;

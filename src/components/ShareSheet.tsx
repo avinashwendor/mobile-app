@@ -3,6 +3,7 @@ import {
   View, Text, Pressable, StyleSheet, Modal, ScrollView, Share,
   Dimensions,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +14,7 @@ import * as userApi from '../api/user.api';
 import * as postApi from '../api/post.api';
 import * as reelApi from '../api/reel.api';
 import * as chatApi from '../api/chat.api';
+import { buildContentDeepLink, buildContentShareMessage } from '../utils/contentLinks';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -52,19 +54,50 @@ export default function ShareSheet({ visible, onClose, contentType = 'post', con
     return () => { cancelled = true; };
   }, [visible]);
 
+  const shareMessage = React.useMemo(() => {
+    if (!contentId || (contentType !== 'post' && contentType !== 'reel')) {
+      return message || `Check out this ${contentType}!`;
+    }
+
+    return buildContentShareMessage({
+      contentType,
+      contentId,
+      headline: message,
+    });
+  }, [contentId, contentType, message]);
+
+  const shareLink = React.useMemo(() => {
+    if (!contentId || (contentType !== 'post' && contentType !== 'reel')) {
+      return '';
+    }
+
+    return buildContentDeepLink({ contentType, contentId });
+  }, [contentId, contentType]);
+
   const handleAction = useCallback(async (key: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       switch (key) {
+        case 'message':
+          await Share.share({ message: shareMessage });
+          break;
         case 'share':
-          await Share.share({ message: message || `Check out this ${contentType}!` });
+          await Share.share({ message: shareMessage });
           if (contentType === 'post' && contentId) {
             await postApi.sharePost(contentId, 'external', { platform: 'system' });
+          } else if (contentType === 'reel' && contentId) {
+            await reelApi.shareReel(contentId, 'external', { platform: 'system' });
           }
           break;
         case 'copy':
+          if (shareLink) {
+            await Clipboard.setStringAsync(shareLink);
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
           if (contentType === 'post' && contentId) {
             await postApi.sharePost(contentId, 'copy_link');
+          } else if (contentType === 'reel' && contentId) {
+            await reelApi.shareReel(contentId, 'copy_link');
           }
           break;
         case 'save':
@@ -81,13 +114,25 @@ export default function ShareSheet({ visible, onClose, contentType = 'post', con
       console.warn('[ShareSheet] action failed:', err);
     }
     onClose();
-  }, [contentType, contentId, message, onClose]);
+  }, [contentType, contentId, onClose, shareLink, shareMessage]);
 
   const handleSendTo = useCallback(async (user: userApi.UserSearchResult) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      if (contentType === 'post' && contentId) {
-        await postApi.sharePost(contentId, 'dm', { recipientId: user._id });
+      if ((contentType === 'post' || contentType === 'reel') && contentId) {
+        const conv = await chatApi.createConversation([user._id], false);
+        await chatApi.sendContentShare({
+          conversationId: conv._id,
+          contentType,
+          contentId,
+          text: shareMessage,
+        });
+
+        if (contentType === 'post') {
+          await postApi.sharePost(contentId, 'dm', { recipientId: user._id });
+        } else {
+          await reelApi.shareReel(contentId, 'dm', { recipientId: user._id });
+        }
       } else {
         const conv = await chatApi.createConversation([user._id], false);
         await chatApi.sendMessage(conv._id, message || `Check out this ${contentType}!`);
@@ -96,7 +141,7 @@ export default function ShareSheet({ visible, onClose, contentType = 'post', con
       console.warn('[ShareSheet] send-to failed:', err);
     }
     onClose();
-  }, [contentType, contentId, message, onClose]);
+  }, [contentType, contentId, message, onClose, shareMessage]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

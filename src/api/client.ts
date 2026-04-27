@@ -31,6 +31,24 @@ const apiClient: AxiosInstance = axios.create({
   },
 });
 
+const clearSession = async (): Promise<void> => {
+  await multiRemove([
+    STORAGE_KEYS.TOKEN,
+    STORAGE_KEYS.REFRESH_TOKEN,
+    STORAGE_KEYS.PUSH_TOKEN,
+    STORAGE_KEYS.USER,
+  ]);
+  // Avoid static import cycle (authStore -> auth.api -> client -> authStore).
+  const { useAuthStore } = await import('../stores/authStore');
+  useAuthStore.setState({
+    user: null,
+    token: null,
+    refreshToken: null,
+    isAuthenticated: false,
+    isLoading: false,
+  });
+};
+
 apiClient.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   const token = await getItem(STORAGE_KEYS.TOKEN);
   if (token && config.headers) {
@@ -47,7 +65,7 @@ apiClient.interceptors.response.use(
     const isAuthEndpoint = url.startsWith('/auth/');
 
     if (status === 401 && !isAuthEndpoint) {
-      await multiRemove([STORAGE_KEYS.TOKEN, STORAGE_KEYS.REFRESH_TOKEN, STORAGE_KEYS.USER]);
+      await clearSession();
     }
 
     const payload = error.response?.data?.error;

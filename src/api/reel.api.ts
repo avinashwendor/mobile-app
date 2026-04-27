@@ -63,6 +63,18 @@ export async function saveReel(reelId: string): Promise<void> {
   await apiClient.post(`/reels/${reelId}/save`, {});
 }
 
+export async function shareReel(
+  reelId: string,
+  shareType: 'dm' | 'external' | 'copy_link',
+  extras: { recipientId?: string; platform?: string } = {},
+): Promise<void> {
+  await apiClient.post(`/reels/${reelId}/share`, {
+    share_type: shareType,
+    recipient_id: extras.recipientId,
+    platform: extras.platform,
+  });
+}
+
 /** No trending-hashtag endpoint yet — return empty list so UI renders nothing. */
 export async function getTrendingHashtags(_limit = 20): Promise<{ name: string; count?: number }[]> {
   return [];

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, RefreshControl,
 } from 'react-native';
@@ -8,15 +8,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../src/theme/tokens';
 import UserAvatar from '../../src/components/UserAvatar';
-import GradientButton from '../../src/components/GradientButton';
 import * as notificationApi from '../../src/api/notification.api';
+import { mapNotification } from '../../src/api/adapters';
+import { socketService } from '../../src/services/socketService';
+import { useNotificationStore } from '../../src/stores/notificationStore';
 import { timeAgo } from '../../src/utils/formatters';
+import { navigateToContent } from '../../src/utils/contentLinks';
 import type { Notification } from '../../src/api/notification.api';
 
 export default function NotificationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const decrementUnread = useNotificationStore((state) => state.decrement);
+  const clearUnread = useNotificationStore((state) => state.clearCount);
+  const fetchUnreadCount = useNotificationStore((state) => state.fetchUnreadCount);
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -24,14 +30,17 @@ export default function NotificationsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const knownIdsRef = useRef(new Set<string>());
 
   const fetchNotifications = useCallback(async (p: number, refresh = false) => {
     try {
       const result = await notificationApi.getNotifications(p, 20);
       if (refresh) {
         setNotifications(result.notifications);
+        knownIdsRef.current = new Set(result.notifications.map((notification) => notification._id));
       } else {
         setNotifications((prev) => [...prev, ...result.notifications]);
+        result.notifications.forEach((notification) => knownIdsRef.current.add(notification._id));
       }
       setUnreadCount(result.unreadCount);
       setHasMore(result.hasMore);
@@ -42,38 +51,57 @@ export default function NotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    fetchNotifications(1, true).then(() => setIsLoading(false));
+    fetchNotifications(1, true)
+      .then(() => fetchUnreadCount())
+      .finally(() => setIsLoading(false));
+  }, [fetchNotifications, fetchUnreadCount]);
+
+  useEffect(() => {
+    const unsubscribe = socketService.on('new_notification', (payload) => {
+      const incoming = mapNotification(payload);
+      if (!incoming._id || knownIdsRef.current.has(incoming._id)) return;
+
+      knownIdsRef.current.add(incoming._id);
+      setNotifications((prev) => [incoming, ...prev]);
+      setUnreadCount((count) => count + 1);
+    });
+
+    return unsubscribe;
   }, []);
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     await fetchNotifications(1, true);
     setIsRefreshing(false);
-  }, []);
+  }, [fetchNotifications]);
 
   const handleMarkAllRead = useCallback(async () => {
     try {
       await notificationApi.markAllRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
       setUnreadCount(0);
+      clearUnread();
     } catch {}
-  }, []);
+  }, [clearUnread]);
 
   const handlePress = useCallback((n: Notification) => {
     if (!n.isRead) {
       notificationApi.markRead(n._id).catch(() => {});
       setNotifications((prev) => prev.map((item) => item._id === n._id ? { ...item, isRead: true } : item));
       setUnreadCount((c) => Math.max(0, c - 1));
+      decrementUnread();
     }
-    // Navigate based on type
-    if (n.contentType === 'post') {
-      router.push({ pathname: '/(screens)/post/[id]', params: { id: n.contentId! } });
-    } else if (n.contentType === 'reel') {
-      // Navigate to reels tab
+    if ((n.contentType === 'post' || n.contentType === 'reel') && n.contentId) {
+      navigateToContent(router, {
+        contentType: n.contentType,
+        contentId: n.contentId,
+        commentId: n.commentId,
+        openComments: Boolean(n.commentId),
+      });
     } else if (n.type === 'follow' || n.type === 'follow_request' || n.type === 'follow_accept') {
       if (n.sender) router.push({ pathname: '/(screens)/user/[id]', params: { id: n.sender.username } });
     }
-  }, []);
+  }, [decrementUnread, router]);
 
   function notifIcon(type: string) {
     switch (type) {
@@ -111,7 +139,7 @@ export default function NotificationsScreen() {
         </View>
       </Pressable>
     );
-  }, [colors]);
+  }, [colors, handlePress]);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>

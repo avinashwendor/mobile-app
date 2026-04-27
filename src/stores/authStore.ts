@@ -3,6 +3,7 @@ import { STORAGE_KEYS } from '../utils/constants';
 import { getItem, setItem, multiRemove, getJSON, setJSON } from '../utils/storage';
 import * as authApi from '../api/auth.api';
 import type { MobileUser } from '../api/adapters';
+import { unregisterStoredPushToken } from '../services/pushNotificationService';
 
 /**
  * Authentication store.
@@ -71,7 +72,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         authApi.getMe().then((fresh) => {
           setJSON(STORAGE_KEYS.USER, fresh).catch(() => {});
           set({ user: fresh });
-        }).catch(() => {});
+        }).catch(async () => {
+          // Persisted auth can become stale after backend resets/deploys.
+          // In that case, drop local session so UI returns to login cleanly.
+          await multiRemove([STORAGE_KEYS.TOKEN, STORAGE_KEYS.REFRESH_TOKEN, STORAGE_KEYS.USER]);
+          set({
+            user: null,
+            token: null,
+            refreshToken: null,
+            isAuthenticated: false,
+          });
+        });
       } else {
         set({ isLoading: false });
       }
@@ -112,10 +123,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: async () => {
     const { refreshToken } = get();
+    await unregisterStoredPushToken().catch(() => {});
     if (refreshToken) {
       authApi.logout(refreshToken).catch(() => {});
     }
-    await multiRemove([STORAGE_KEYS.TOKEN, STORAGE_KEYS.REFRESH_TOKEN, STORAGE_KEYS.USER]);
+    await multiRemove([
+      STORAGE_KEYS.TOKEN,
+      STORAGE_KEYS.REFRESH_TOKEN,
+      STORAGE_KEYS.PUSH_TOKEN,
+      STORAGE_KEYS.USER,
+    ]);
     set({ user: null, token: null, refreshToken: null, isAuthenticated: false });
   },
 

@@ -9,31 +9,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii } from '../../src/theme/tokens';
-import apiClient from '../../src/api/client';
+import revenueApi, { type RevenueSummary, type DailyRevenueRow, type PayoutRequest } from '../../src/api/revenue.api';
 import { compactNumber } from '../../src/utils/formatters';
 
 const BAR_MAX_HEIGHT = 120;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOW_DAYS = 30;
 
-interface AnalyticsRow {
-  date: string;
-  ad_earnings?: number;
-  reach?: number;
-  impressions?: number;
-}
-
-interface EarningsRow {
-  _id?: string;
-  id?: string;
-  content_type?: string;
-  period?: string;
-  earnings?: number;
-  currency?: string;
-  is_paid?: boolean;
-  paid_at?: string;
-  created_at?: string;
-}
+type SourceTab = 'all' | 'ad_impression' | 'membership' | 'collaboration';
+const SOURCE_TABS: { key: SourceTab; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'ad_impression', label: 'Ads' },
+  { key: 'membership', label: 'Members' },
+  { key: 'collaboration', label: 'Collabs' },
+];
 
 interface DailyBar {
   dateLabel: string;
@@ -42,109 +30,52 @@ interface DailyBar {
 
 const formatCurrency = (amount: number): string => `$${compactNumber(Math.max(0, amount))}`;
 
-const isoDaysAgo = (days: number): string => new Date(Date.now() - days * DAY_MS).toISOString();
-
-const startOfMonth = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), 1);
-
 export default function RevenueScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
 
-  const [analytics, setAnalytics] = useState<AnalyticsRow[]>([]);
-  const [earnings, setEarnings] = useState<EarningsRow[]>([]);
+  const [summary, setSummary] = useState<RevenueSummary | null>(null);
+  const [daily, setDaily] = useState<DailyRevenueRow[]>([]);
+  const [payouts, setPayouts] = useState<PayoutRequest[]>([]);
+  const [sourceTab, setSourceTab] = useState<SourceTab>('all');
   const [isLoading, setIsLoading] = useState(true);
-  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
-  const [earningsError, setEarningsError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchAnalytics = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     try {
-      const { data } = await apiClient.get<{ success: boolean; data: AnalyticsRow[] }>('/analytics/me', {
-        params: {
-          start_date: isoDaysAgo(WINDOW_DAYS),
-          end_date: new Date().toISOString(),
-        },
-      });
-      setAnalytics(Array.isArray(data.data) ? data.data : []);
-      setAnalyticsError(null);
+      const [s, d, p] = await Promise.all([
+        revenueApi.getSummary(),
+        revenueApi.getDaily(WINDOW_DAYS),
+        revenueApi.getPayoutHistory(),
+      ]);
+      setSummary(s);
+      setDaily(d);
+      setPayouts(p);
+      setError(null);
     } catch {
-      setAnalytics([]);
-      setAnalyticsError('Earnings analytics are unavailable right now.');
-    }
-  }, []);
-
-  const fetchEarnings = useCallback(async () => {
-    try {
-      const { data } = await apiClient.get<{ success: boolean; data: EarningsRow[] }>('/ads/earnings', {
-        params: { limit: 20 },
-      });
-      setEarnings(Array.isArray(data.data) ? data.data : []);
-      setEarningsError(null);
-    } catch {
-      setEarnings([]);
-      setEarningsError('Transaction history is unavailable right now.');
+      setError('Revenue data is unavailable right now.');
     }
   }, []);
 
   useEffect(() => {
-    Promise.all([fetchAnalytics(), fetchEarnings()]).finally(() => setIsLoading(false));
-  }, [fetchAnalytics, fetchEarnings]);
+    fetchAll().finally(() => setIsLoading(false));
+  }, [fetchAll]);
 
-  const { analyticsEarnings, dailyBars } = useMemo(() => {
-    let total = 0;
-    const bars: DailyBar[] = [];
-    for (const row of analytics) {
-      const amount = Number(row.ad_earnings ?? 0);
-      total += amount;
-      bars.push({
-        dateLabel: new Date(row.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        amount,
-      });
-    }
-    // Only render up to 12 bars so the chart stays legible.
-    const trimmed = bars.slice(Math.max(0, bars.length - 12));
-    return { analyticsEarnings: total, dailyBars: trimmed };
-  }, [analytics]);
+  const dailyBars = useMemo((): DailyBar[] => {
+    const bars = daily.map((r) => ({
+      dateLabel: new Date(r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      amount: Number(r.earnings ?? 0),
+    }));
+    return bars.slice(Math.max(0, bars.length - 12));
+  }, [daily]);
 
-  const { totalPaid, thisMonth, lastMonth, pending, breakdown } = useMemo(() => {
-    const now = new Date();
-    const thisMonthStart = startOfMonth(now);
-    const lastMonthStart = startOfMonth(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+  const filteredBreakdown = useMemo(() => {
+    if (!summary) return [];
+    if (sourceTab === 'all') return summary.breakdown;
+    return summary.breakdown.filter((b) => b.source === sourceTab);
+  }, [summary, sourceTab]);
 
-    let total = 0;
-    let thisM = 0;
-    let lastM = 0;
-    let pend = 0;
-    const sourceMap = new Map<string, number>();
-
-    for (const row of earnings) {
-      const amount = Number(row.earnings ?? 0);
-      const createdAt = new Date(row.paid_at ?? row.created_at ?? 0);
-      total += amount;
-      if (!row.is_paid) pend += amount;
-
-      if (createdAt >= thisMonthStart) thisM += amount;
-      else if (createdAt >= lastMonthStart && createdAt < thisMonthStart) lastM += amount;
-
-      const source = row.content_type
-        ? `${row.content_type.charAt(0).toUpperCase()}${row.content_type.slice(1)} ads`
-        : 'Ad revenue';
-      sourceMap.set(source, (sourceMap.get(source) ?? 0) + amount);
-    }
-
-    const totalForPct = total || 1;
-    const list = Array.from(sourceMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([source, amount]) => ({
-        source,
-        amount,
-        percentage: Math.round((amount / totalForPct) * 100),
-      }));
-
-    return { totalPaid: total, thisMonth: thisM, lastMonth: lastM, pending: pend, breakdown: list };
-  }, [earnings]);
-
-  const topLineTotal = totalPaid > 0 ? totalPaid : analyticsEarnings;
   const maxBar = Math.max(...dailyBars.map((b) => b.amount), 0);
 
   if (isLoading) {
@@ -169,40 +100,50 @@ export default function RevenueScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.text }]}>Revenue</Text>
-        <Pressable hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <Ionicons name="download-outline" size={22} color={colors.text} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => router.push('/(screens)/payout-settings')} hitSlop={8}>
+            <Ionicons name="settings-outline" size={22} color={colors.text} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <Animated.View entering={FadeInDown.delay(50)}>
           <LinearGradient colors={['#00B894', '#55EFC4']} style={styles.earningsCard}>
             <Text style={styles.earningsLabel}>Total Earnings</Text>
-            <Text style={styles.earningsValue}>{formatCurrency(topLineTotal)}</Text>
+            <Text style={styles.earningsValue}>{formatCurrency(summary?.total ?? 0)}</Text>
             <View style={styles.earningsRow}>
               <View style={styles.earningsItem}>
                 <Text style={styles.earningsItemLabel}>This Month</Text>
-                <Text style={styles.earningsItemValue}>{formatCurrency(thisMonth)}</Text>
+                <Text style={styles.earningsItemValue}>{formatCurrency(summary?.thisMonth ?? 0)}</Text>
               </View>
               <View style={styles.earningsDivider} />
               <View style={styles.earningsItem}>
                 <Text style={styles.earningsItemLabel}>Last Month</Text>
-                <Text style={styles.earningsItemValue}>{formatCurrency(lastMonth)}</Text>
+                <Text style={styles.earningsItemValue}>{formatCurrency(summary?.lastMonth ?? 0)}</Text>
               </View>
               <View style={styles.earningsDivider} />
               <View style={styles.earningsItem}>
-                <Text style={styles.earningsItemLabel}>Pending</Text>
-                <Text style={styles.earningsItemValue}>{formatCurrency(pending)}</Text>
+                <Text style={styles.earningsItemLabel}>Available</Text>
+                <Text style={styles.earningsItemValue}>{formatCurrency(summary?.available ?? 0)}</Text>
               </View>
             </View>
+            {/* Withdraw button */}
+            <Pressable
+              style={styles.withdrawBtn}
+              onPress={() => router.push('/(screens)/payout-request')}
+            >
+              <Ionicons name="cash-outline" size={16} color="#00B894" />
+              <Text style={styles.withdrawBtnText}>Withdraw Funds</Text>
+            </Pressable>
           </LinearGradient>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(150)}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Daily Ad Earnings · Last {WINDOW_DAYS} days</Text>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Daily Earnings · Last {WINDOW_DAYS} days</Text>
           <View style={[styles.chartCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
-            {analyticsError ? (
-              <Text style={[styles.errorText, { color: colors.textSecondary }]}>{analyticsError}</Text>
+            {error ? (
+              <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error}</Text>
             ) : dailyBars.length === 0 ? (
               <Text style={[styles.errorText, { color: colors.textTertiary }]}>
                 No earnings tracked in this window.
@@ -229,16 +170,36 @@ export default function RevenueScreen() {
 
         <Animated.View entering={FadeInDown.delay(250)}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Revenue Breakdown</Text>
+          {/* Source filter tabs */}
+          <View style={styles.tabRow}>
+            {SOURCE_TABS.map((tab) => (
+              <Pressable
+                key={tab.key}
+                onPress={() => setSourceTab(tab.key)}
+                style={[
+                  styles.tab,
+                  {
+                    backgroundColor: sourceTab === tab.key ? Colors.primary : colors.surfaceElevated,
+                    borderColor: sourceTab === tab.key ? Colors.primary : colors.border,
+                  },
+                ]}
+              >
+                <Text style={[styles.tabLabel, { color: sourceTab === tab.key ? '#fff' : colors.textSecondary }]}>
+                  {tab.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
           <View style={[styles.breakdownCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
-            {breakdown.length === 0 ? (
+            {filteredBreakdown.length === 0 ? (
               <Text style={[styles.errorText, { color: colors.textTertiary }]}>
-                {earningsError ?? 'No revenue recorded yet.'}
+                {error ?? 'No revenue recorded yet.'}
               </Text>
             ) : (
-              breakdown.map((item, index) => (
+              filteredBreakdown.map((item, index) => (
                 <View
                   key={item.source}
-                  style={[styles.breakdownItem, index < breakdown.length - 1 && { borderBottomColor: colors.border, borderBottomWidth: 0.5 }]}
+                  style={[styles.breakdownItem, index < filteredBreakdown.length - 1 && { borderBottomColor: colors.border, borderBottomWidth: 0.5 }]}
                 >
                   <View style={styles.breakdownLeft}>
                     <Text style={[styles.breakdownSource, { color: colors.text }]}>{item.source}</Text>
@@ -252,44 +213,42 @@ export default function RevenueScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(350)}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Transactions</Text>
-          {earnings.length === 0 ? (
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Payout History</Text>
+          {payouts.length === 0 ? (
             <View style={[styles.transactionCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
               <Text style={[styles.errorText, { color: colors.textTertiary }]}>
-                {earningsError ?? 'No transactions yet.'}
+                {error ?? 'No payouts yet.'}
               </Text>
             </View>
-          ) : earnings.map((tx, index) => {
-            const paid = Boolean(tx.is_paid);
-            const date = tx.paid_at ?? tx.created_at ?? new Date().toISOString();
-            const statusColor = paid ? '#00B894' : '#FDCB6E';
-            const description = tx.content_type
-              ? `${tx.content_type.charAt(0).toUpperCase()}${tx.content_type.slice(1)} earnings${tx.period ? ` · ${tx.period}` : ''}`
-              : `Earnings${tx.period ? ` · ${tx.period}` : ''}`;
+          ) : payouts.map((tx, index) => {
+            const statusColor =
+              tx.status === 'completed' ? '#00B894' :
+              tx.status === 'failed' ? '#E17264' : '#FDCB6E';
+            const statusIcon =
+              tx.status === 'completed' ? 'checkmark-circle' :
+              tx.status === 'failed' ? 'close-circle' : 'time';
             return (
               <Animated.View
-                key={String(tx._id ?? tx.id ?? index)}
+                key={tx.id ?? String(index)}
                 entering={FadeInDown.delay(400 + index * 40)}
                 style={[styles.transactionCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}
               >
                 <View style={[styles.txIcon, { backgroundColor: statusColor + '20' }]}>
-                  <Ionicons
-                    name={paid ? 'checkmark-circle' : 'time'}
-                    size={20}
-                    color={statusColor}
-                  />
+                  <Ionicons name={statusIcon} size={20} color={statusColor} />
                 </View>
                 <View style={styles.txContent}>
-                  <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>{description}</Text>
+                  <Text style={[styles.txDescription, { color: colors.text }]} numberOfLines={1}>
+                    {tx.method === 'bank_transfer' ? 'Bank Transfer' : tx.method === 'paypal' ? 'PayPal' : 'Wallet'}
+                  </Text>
                   <Text style={[styles.txDate, { color: colors.textTertiary }]}>
-                    {new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {new Date(tx.requested_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </Text>
                 </View>
                 <View style={styles.txRight}>
                   <Text style={[styles.txAmount, { color: statusColor }]}>
-                    +{formatCurrency(Number(tx.earnings ?? 0))}
+                    -{formatCurrency(tx.amount)}
                   </Text>
-                  <Text style={[styles.txStatus, { color: colors.textTertiary }]}>{paid ? 'paid' : 'pending'}</Text>
+                  <Text style={[styles.txStatus, { color: colors.textTertiary }]}>{tx.status}</Text>
                 </View>
               </Animated.View>
             );
@@ -305,6 +264,12 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.base, paddingBottom: Spacing.md, borderBottomWidth: 0.5 },
   headerTitle: { fontFamily: Typography.fontFamily.bold, fontSize: Typography.size.lg },
+  headerActions: { flexDirection: 'row', gap: Spacing.sm },
+  withdrawBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, backgroundColor: '#fff', borderRadius: Radii.full, paddingVertical: Spacing.sm, marginTop: Spacing.md },
+  withdrawBtnText: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm, color: '#00B894' },
+  tabRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.sm },
+  tab: { borderRadius: Radii.full, borderWidth: 1, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
+  tabLabel: { fontFamily: Typography.fontFamily.medium, fontSize: Typography.size.xs },
   content: { padding: Spacing.base, paddingBottom: 40 },
   earningsCard: { borderRadius: Radii.lg, padding: Spacing.lg, marginBottom: Spacing.lg },
   earningsLabel: { fontFamily: Typography.fontFamily.medium, fontSize: Typography.size.sm, color: 'rgba(255,255,255,0.7)' },

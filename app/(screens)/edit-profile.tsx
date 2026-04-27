@@ -1,16 +1,15 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, ScrollView,
-  Alert, ActivityIndicator, Platform, Switch,
+  Alert, Switch,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../../src/theme/ThemeProvider';
-import { Colors, Typography, Spacing, Radii, HitSlop } from '../../src/theme/tokens';
+import { Colors, Typography, Spacing, HitSlop } from '../../src/theme/tokens';
 import UserAvatar from '../../src/components/UserAvatar';
-import GradientButton from '../../src/components/GradientButton';
 import { useAuthStore } from '../../src/stores/authStore';
 import * as authApi from '../../src/api/auth.api';
 import * as userApi from '../../src/api/user.api';
@@ -25,6 +24,7 @@ export default function EditProfileScreen() {
   const [fullName, setFullName] = useState(user?.fullName || '');
   const [bio, setBio] = useState(user?.bio || '');
   const [website, setWebsite] = useState(user?.website || '');
+  const [socialLinksText, setSocialLinksText] = useState((user?.socialLinks ?? []).join('\n'));
   const [isPrivate, setIsPrivate] = useState(user?.isPrivate || false);
   const [isSaving, setIsSaving] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -54,6 +54,7 @@ export default function EditProfileScreen() {
         fullName: fullName.trim(),
         bio: bio.trim(),
         website: website.trim(),
+        socialLinks: socialLinksText.split('\n').map((link) => link.trim()).filter(Boolean),
         isPrivate,
       });
 
@@ -66,7 +67,7 @@ export default function EditProfileScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [fullName, bio, website, isPrivate, avatarUri]);
+  }, [avatarUri, bio, fullName, isPrivate, router, setUser, socialLinksText, website]);
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
@@ -95,6 +96,16 @@ export default function EditProfileScreen() {
           <EditField label="Name" value={fullName} onChange={setFullName} placeholder="Full name" />
           <EditField label="Bio" value={bio} onChange={setBio} placeholder="Tell about yourself..." multiline maxLength={150} />
           <EditField label="Website" value={website} onChange={setWebsite} placeholder="www.example.com" keyboardType="url" />
+          <EditField
+            label="Other links"
+            value={socialLinksText}
+            onChange={setSocialLinksText}
+            placeholder="instagram.com/yourname&#10;youtube.com/@yourchannel"
+            keyboardType="url"
+            multiline
+            maxLength={500}
+          />
+          <Text style={[styles.helperText, { color: colors.textTertiary }]}>Add one social or website link per line.</Text>
 
           <View style={[styles.fieldRow, { borderBottomColor: colors.border }]}>
             <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Private Account</Text>
@@ -146,6 +157,7 @@ const styles = StyleSheet.create({
   avatarSection: { alignItems: 'center', paddingVertical: Spacing.xl },
   changePhotoText: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm, marginTop: Spacing.md },
   fields: { gap: 0 },
+  helperText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, marginTop: Spacing.sm },
   fieldRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.md, borderBottomWidth: 0.5 },
   fieldLabel: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.base },
 });

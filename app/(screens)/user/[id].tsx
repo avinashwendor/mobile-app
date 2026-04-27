@@ -15,6 +15,7 @@ import GradientButton from '../../../src/components/GradientButton';
 import { useAuthStore } from '../../../src/stores/authStore';
 import * as userApi from '../../../src/api/user.api';
 import * as followApi from '../../../src/api/follow.api';
+import * as storyApi from '../../../src/api/story.api';
 import { compactNumber } from '../../../src/utils/formatters';
 import type { UserProfile } from '../../../src/api/user.api';
 
@@ -34,6 +35,8 @@ export default function UserProfileScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [hasStories, setHasStories] = useState(false);
+  const [allStoriesViewed, setAllStoriesViewed] = useState(false);
 
   useEffect(() => {
     if (!username) return;
@@ -42,13 +45,26 @@ export default function UserProfileScreen() {
         const p = await userApi.getUserProfile(username);
         setProfile(p);
         setIsFollowing(Boolean(p.isFollowing));
+
+        // Fetch stories to decide whether to show the gradient ring.
+        // canViewStories = public account OR we're following them OR it's our own profile
+        const canViewStories = !p.isPrivate || Boolean(p.isFollowing) || authUser?.username === username;
+        if (canViewStories && p._id) {
+          try {
+            const stories = await storyApi.getUserStories(p._id);
+            setHasStories(stories.length > 0);
+            setAllStoriesViewed(stories.length > 0 && stories.every((s) => s.hasViewed));
+          } catch {
+            // silently ignore — ring just won't show
+          }
+        }
       } catch (err) {
         console.error('Failed to load user:', err);
       } finally {
         setIsLoading(false);
       }
     })();
-  }, [username]);
+  }, [authUser?.username, username]);
 
   const handleFollowToggle = useCallback(async () => {
     if (!profile || followLoading) return;
@@ -69,6 +85,18 @@ export default function UserProfileScreen() {
   }, [profile, isFollowing, followLoading]);
 
   const isOwnProfile = authUser?.username === username;
+
+  /** Tap on avatar ring — open story viewer or prompt to follow */
+  const handleAvatarPress = useCallback(() => {
+    if (!profile) return;
+    const canViewStories = !profile.isPrivate || isFollowing || isOwnProfile;
+    if (!canViewStories) {
+      Alert.alert('Private Account', 'Follow this account to see their stories.');
+      return;
+    }
+    if (!hasStories) return; // no active stories — tap does nothing
+    router.push({ pathname: '/(screens)/story-viewer', params: { userId: profile._id } });
+  }, [hasStories, isFollowing, isOwnProfile, profile, router]);
 
   if (isLoading) {
     return (
@@ -103,11 +131,24 @@ export default function UserProfileScreen() {
       {/* Profile info */}
       <View style={styles.profileSection}>
         <View style={styles.avatarRow}>
-          <LinearGradient colors={[...Colors.gradientStory]} style={styles.avatarGradient}>
-            <View style={[styles.avatarInner, { backgroundColor: colors.background }]}>
-              <UserAvatar uri={profile.profilePicture} size="xl" />
-            </View>
-          </LinearGradient>
+          <Pressable onPress={handleAvatarPress} disabled={!hasStories && (profile.isPrivate && !isFollowing && !isOwnProfile)}>
+            {hasStories ? (
+              <LinearGradient
+                colors={allStoriesViewed ? ['#C0C0C0', '#A0A0A0'] : ([...Colors.gradientStory] as any)}
+                style={styles.avatarGradient}
+              >
+                <View style={[styles.avatarInner, { backgroundColor: colors.background }]}>
+                  <UserAvatar uri={profile.profilePicture} size="xl" />
+                </View>
+              </LinearGradient>
+            ) : (
+              <View style={[styles.avatarGradient, { backgroundColor: colors.border }]}>
+                <View style={[styles.avatarInner, { backgroundColor: colors.background }]}>
+                  <UserAvatar uri={profile.profilePicture} size="xl" />
+                </View>
+              </View>
+            )}
+          </Pressable>
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: colors.text }]}>{compactNumber(profile.postsCount)}</Text>

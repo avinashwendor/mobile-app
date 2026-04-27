@@ -6,15 +6,126 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../../src/theme/tokens';
 import UserAvatar from '../../../src/components/UserAvatar';
 import * as chatApi from '../../../src/api/chat.api';
+import * as postApi from '../../../src/api/post.api';
+import * as reelApi from '../../../src/api/reel.api';
 import { mapChatMessage } from '../../../src/api/adapters';
 import { useAuthStore } from '../../../src/stores/authStore';
 import { socketService } from '../../../src/services/socketService';
 import { formatMessageTime } from '../../../src/utils/formatters';
+import { navigateToContent } from '../../../src/utils/contentLinks';
 import type { ChatMessage } from '../../../src/api/chat.api';
+
+function SharedContentPreview({
+  message,
+  isMine,
+  colors,
+  router,
+}: {
+  message: ChatMessage;
+  isMine: boolean;
+  colors: {
+    text: string;
+    textSecondary: string;
+    surfaceElevated: string;
+    background: string;
+    border: string;
+  };
+  router: { push: (route: any) => void };
+}) {
+  const contentId = message.content.sharedContentId;
+  const contentType = message.content.sharedContentType;
+  const commentId = message.content.sharedCommentId;
+  const [preview, setPreview] = useState<{ imageUrl?: string; title: string; subtitle: string } | null>(null);
+
+  useEffect(() => {
+    if (!contentId || (contentType !== 'post' && contentType !== 'reel')) {
+      setPreview(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        if (contentType === 'post') {
+          const post = await postApi.getPost(contentId);
+          if (cancelled) return;
+
+          setPreview({
+            imageUrl: post.media[0]?.thumbnail || post.media[0]?.url,
+            title: `Post by @${post.author.username}`,
+            subtitle: post.caption || 'Tap to open the shared post',
+          });
+          return;
+        }
+
+        const reel = await reelApi.getReel(contentId);
+        if (cancelled) return;
+
+        setPreview({
+          imageUrl: reel.video.thumbnail || reel.video.url,
+          title: `Reel by @${reel.author.username}`,
+          subtitle: reel.caption || 'Tap to open the shared reel',
+        });
+      } catch {
+        if (!cancelled) {
+          setPreview({
+            title: contentType === 'reel' ? 'Shared reel' : 'Shared post',
+            subtitle: 'Tap to open in INSTAYT',
+          });
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contentId, contentType]);
+
+  if (!contentId || (contentType !== 'post' && contentType !== 'reel')) {
+    return null;
+  }
+
+  return (
+    <Pressable
+      style={[
+        styles.sharedCard,
+        {
+          borderColor: isMine ? 'rgba(255,255,255,0.16)' : colors.border,
+          backgroundColor: isMine ? 'rgba(255,255,255,0.12)' : colors.background,
+        },
+      ]}
+      onPress={() => navigateToContent(router, {
+        contentType,
+        contentId,
+        commentId,
+        openComments: Boolean(commentId),
+      })}
+    >
+      {preview?.imageUrl ? (
+        <Image source={{ uri: preview.imageUrl }} style={styles.sharedCardImage} contentFit="cover" transition={120} />
+      ) : (
+        <View style={[styles.sharedCardFallback, { backgroundColor: isMine ? 'rgba(255,255,255,0.16)' : colors.surfaceElevated }]}> 
+          <Ionicons name={contentType === 'reel' ? 'videocam-outline' : 'image-outline'} size={22} color={isMine ? Colors.white : colors.textSecondary} />
+        </View>
+      )}
+
+      <View style={styles.sharedCardBody}>
+        <Text style={[styles.sharedCardTitle, { color: isMine ? Colors.white : colors.text }]} numberOfLines={1}>
+          {preview?.title || (contentType === 'reel' ? 'Shared reel' : 'Shared post')}
+        </Text>
+        <Text style={[styles.sharedCardSubtitle, { color: isMine ? 'rgba(255,255,255,0.78)' : colors.textSecondary }]} numberOfLines={2}>
+          {preview?.subtitle || 'Tap to open in INSTAYT'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
 
 export default function ChatThreadScreen() {
   const params = useLocalSearchParams<{ convId?: string | string[] }>();
@@ -174,9 +285,16 @@ export default function ChatThreadScreen() {
               <Ionicons name="ban-outline" size={12} /> This message was deleted
             </Text>
           ) : (
-            <Text style={[styles.msgText, { color: isMine ? Colors.white : colors.text }]}>
-              {item.content?.text || ''}
-            </Text>
+            <>
+              {(item.messageType === 'post_share' || item.messageType === 'reel_share') && (
+                <SharedContentPreview message={item} isMine={isMine} colors={colors} router={router} />
+              )}
+              {!!item.content?.text && (
+                <Text style={[styles.msgText, { color: isMine ? Colors.white : colors.text }]}>
+                  {item.content.text}
+                </Text>
+              )}
+            </>
           )}
         </View>
         <View style={[styles.msgMeta, isMine ? styles.metaMine : styles.metaOther]}>
@@ -292,6 +410,12 @@ const styles = StyleSheet.create({
   bubble: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
   bubbleMine: { borderRadius: 18, borderBottomRightRadius: 4 },
   bubbleOther: { borderRadius: 18, borderBottomLeftRadius: 4 },
+  sharedCard: { borderWidth: 1, borderRadius: Radii.md, overflow: 'hidden', marginBottom: Spacing.xs },
+  sharedCardImage: { width: '100%', height: 140 },
+  sharedCardFallback: { width: '100%', height: 88, alignItems: 'center', justifyContent: 'center' },
+  sharedCardBody: { padding: Spacing.sm, gap: 4 },
+  sharedCardTitle: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm },
+  sharedCardSubtitle: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, lineHeight: 16 },
   msgText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.base, lineHeight: 22 },
   deletedText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.sm, fontStyle: 'italic' },
   msgMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 4 },

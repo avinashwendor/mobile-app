@@ -15,6 +15,15 @@ export interface StoryGroup {
   hasViewed: boolean;
 }
 
+export interface StoryInsights {
+  storyId: string;
+  viewsCount: number;
+  likesCount: number;
+  reactionsCount: number;
+  viewers: { user: MobileUser; viewedAt: string }[];
+  likes: { user: MobileUser; reactedAt: string; emoji: string }[];
+}
+
 /** GET /stories/feed — flatten → group by author for the home row. */
 export async function getStoryFeed(): Promise<StoryGroup[]> {
   const { data } = await apiClient.get('/stories/feed', { params: { limit: 50 } });
@@ -54,9 +63,9 @@ export async function getStoryFeed(): Promise<StoryGroup[]> {
 
 /** GET /users/:id/stories — not exposed today; derive from /stories/feed. */
 export async function getUserStories(userId: string): Promise<Story[]> {
-  const groups = await getStoryFeed();
-  const g = groups.find((group) => group.author._id === userId);
-  return g?.stories ?? [];
+  const { data } = await apiClient.get(`/stories/user/${userId}`);
+  const list: any[] = Array.isArray(data.data) ? data.data : [];
+  return list.map(mapStory);
 }
 
 /** GET /stories/:id */
@@ -81,10 +90,14 @@ export async function createStory(payload: {
   mediaType?: 'image' | 'video';
   text?: string;
   visibility?: 'public' | 'followers' | 'close-friends';
+  filterId?: string;
+  audioTrackId?: string;
 }): Promise<Story> {
   const formData = new FormData();
   if (payload.visibility) formData.append('visibility', payload.visibility === 'close-friends' ? 'close_friends' : payload.visibility);
   if (payload.text) formData.append('caption', payload.text);
+  if (payload.filterId) formData.append('filter_id', payload.filterId);
+  if (payload.audioTrackId) formData.append('audio_track_id', payload.audioTrackId);
 
   if (payload.mediaUri) {
     const filename = payload.mediaUri.split('/').pop() ?? 'story.jpg';
@@ -116,4 +129,27 @@ export async function getStoryViews(storyId: string): Promise<{ user: MobileUser
     user: mapUser(row.user_id ?? row.user ?? {}),
     viewedAt: row.viewed_at ?? row.viewedAt ?? new Date().toISOString(),
   }));
+}
+
+export async function getStoryInsights(storyId: string): Promise<StoryInsights> {
+  const { data } = await apiClient.get(`/stories/${storyId}/insights`);
+  const payload = data.data ?? {};
+  const viewers = Array.isArray(payload.viewers) ? payload.viewers : [];
+  const likes = Array.isArray(payload.likes) ? payload.likes : [];
+
+  return {
+    storyId: String(payload.story_id ?? payload.storyId ?? storyId),
+    viewsCount: Number(payload.views_count ?? payload.viewsCount ?? viewers.length),
+    likesCount: Number(payload.likes_count ?? payload.likesCount ?? likes.length),
+    reactionsCount: Number(payload.reactions_count ?? payload.reactionsCount ?? likes.length),
+    viewers: viewers.map((viewer: any) => ({
+      user: mapUser(viewer.user ?? viewer.user_id ?? {}),
+      viewedAt: String(viewer.viewed_at ?? viewer.viewedAt ?? new Date().toISOString()),
+    })),
+    likes: likes.map((reaction: any) => ({
+      user: mapUser(reaction.user ?? reaction.user_id ?? {}),
+      reactedAt: String(reaction.reacted_at ?? reaction.reactedAt ?? reaction.created_at ?? new Date().toISOString()),
+      emoji: String(reaction.emoji ?? '❤️'),
+    })),
+  };
 }

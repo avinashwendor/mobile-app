@@ -104,6 +104,10 @@ export default function SettingsScreen() {
         <SettingRow icon="bookmark-outline" label="Saved" onPress={() => router.push('/(screens)/saved' as any)} />
         <SettingRow icon="shield-checkmark-outline" label="Privacy" />
 
+        {/* Community */}
+        <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Community</Text>
+        <SettingRow icon="server-outline" iconColor={Colors.primary} label="Servers" onPress={() => router.push('/(screens)/servers' as any)} />
+
         {/* Creator */}
         <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Creator</Text>
         <SettingRow icon="analytics-outline" iconColor={Colors.accent} label="Insights" onPress={() => router.push('/(screens)/insights' as any)} />
