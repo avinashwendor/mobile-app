@@ -57,6 +57,7 @@ const VISIBILITY_OPTIONS: { value: Visibility; label: string; icon: keyof typeof
 ];
 
 const MAX_CAPTION = 2200;
+const POST_PICKER_QUALITY = 0.78;
 
 function extractTokens(text: string) {
   const hashtags = Array.from(new Set(Array.from(text.matchAll(/#([\p{L}0-9_]+)/gu)).map((m) => m[1])));
@@ -102,7 +103,7 @@ export default function CreatePostScreen() {
       mediaTypes: ImagePicker.MediaTypeOptions.All,
       allowsMultipleSelection: true,
       selectionLimit: 10,
-      quality: 0.85,
+      quality: POST_PICKER_QUALITY,
       videoMaxDuration: 60,
       exif: false,
     });
@@ -128,7 +129,7 @@ export default function CreatePostScreen() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.All,
-      quality: 0.85,
+      quality: POST_PICKER_QUALITY,
       videoMaxDuration: 60,
     });
     if (result.canceled || !result.assets.length) return;

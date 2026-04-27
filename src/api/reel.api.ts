@@ -7,6 +7,7 @@ import { mapReel, unwrap, type MobileReel, type MobileUser } from './adapters';
  */
 
 export type Reel = MobileReel;
+const REEL_UPLOAD_TIMEOUT_MS = 300_000;
 
 const pageState = new Map<string, string | null>();
 
@@ -50,7 +51,7 @@ export async function createReel(payload: {
 
   const res = await apiClient.post('/reels', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 180_000,
+    timeout: REEL_UPLOAD_TIMEOUT_MS,
   });
   return mapReel(unwrap<any>(res));
 }

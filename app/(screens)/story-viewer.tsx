@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ActivityIndicator, Alert, Modal, ScrollView, TextInput,
+  Keyboard, Platform, Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -96,16 +97,19 @@ export default function StoryViewerScreen() {
   const [shareVisible, setShareVisible] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
+  const [isReplyFocused, setIsReplyFocused] = useState(false);
   const [isReacting, setIsReacting] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [insights, setInsights] = useState<StoryInsights | null>(null);
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [isMediaReady, setIsMediaReady] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const progress = useSharedValue(0);
   const lastStoryIdRef = useRef<string | null>(null);
   const pressStartRef = useRef<number>(0);
   const audioSoundRef = useRef<Audio.Sound | null>(null);
+  const replyInputRef = useRef<TextInput>(null);
   /** Threshold in ms: presses shorter than this are "taps" (navigate), longer are "holds" (pause only). */
   const TAP_THRESHOLD_MS = 200;
 
@@ -227,9 +231,9 @@ export default function StoryViewerScreen() {
   // Pause / resume audio with story hold
   useEffect(() => {
     if (!audioSoundRef.current) return;
-    if (isPaused) audioSoundRef.current.pauseAsync().catch(() => {});
+    if (isPaused || isReplyFocused) audioSoundRef.current.pauseAsync().catch(() => {});
     else audioSoundRef.current.playAsync().catch(() => {});
-  }, [isPaused]);
+  }, [isPaused, isReplyFocused]);
 
   // Cleanup audio on screen unmount
   useEffect(() => () => {
@@ -237,10 +241,31 @@ export default function StoryViewerScreen() {
     audioSoundRef.current?.unloadAsync().catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = Keyboard.addListener(showEvent, (event: any) => {
+      const windowHeight = Dimensions.get('window').height;
+      const eventHeight = event?.endCoordinates?.height ?? 0;
+      const screenY = event?.endCoordinates?.screenY ?? windowHeight;
+      const derivedHeight = Math.max(0, windowHeight - screenY);
+      setKeyboardHeight(Math.max(eventHeight, derivedHeight));
+    });
+    const onHide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   // Only start the progress timer after the media has fully loaded
   useEffect(() => {
     cancelAnimation(progress);
-    if (!currentStory || isPaused || !isMediaReady) return;
+    if (!currentStory || isPaused || isReplyFocused || !isMediaReady) return;
     const remainingDuration = Math.max(200, Math.round(storyDurationMs * (1 - progress.value)));
     progress.value = withTiming(1, { duration: remainingDuration }, (finished) => {
       if (finished) runOnJS(goNext)();
@@ -249,7 +274,7 @@ export default function StoryViewerScreen() {
     return () => {
       cancelAnimation(progress);
     };
-  }, [currentStory, goNext, isMediaReady, isPaused, progress, storyDurationMs]);
+  }, [currentStory, goNext, isMediaReady, isPaused, isReplyFocused, progress, storyDurationMs]);
 
   const handlePressIn = useCallback(() => {
     pressStartRef.current = Date.now();
@@ -314,13 +339,13 @@ export default function StoryViewerScreen() {
       const conversation = await chatApi.createConversation([currentStory.author._id], false);
       await chatApi.sendStoryReply(conversation._id, currentStory._id, text);
       setReplyText('');
-      router.push({ pathname: '/(screens)/chat/[convId]', params: { convId: conversation._id } });
+      replyInputRef.current?.blur();
     } catch (error) {
       Alert.alert('Could not send reply', 'Please try again.');
     } finally {
       setIsSendingReply(false);
     }
-  }, [currentStory, isOwner, isSendingReply, replyText, router]);
+  }, [currentStory, isOwner, isSendingReply, replyText]);
 
   const handleDeleteStory = useCallback(async () => {
     if (!currentStory || !isOwner) return;
@@ -482,7 +507,7 @@ export default function StoryViewerScreen() {
 
       <LinearGradient
         colors={['transparent', 'rgba(0,0,0,0.6)']}
-        style={[styles.bottomOverlay, { paddingBottom: insets.bottom + Spacing.sm }]}
+        style={[styles.bottomOverlay, { paddingBottom: Math.max(insets.bottom + Spacing.sm, keyboardHeight + Spacing.md) }]}
       >
         {currentStory.text?.content ? (
           <View style={styles.captionChip}>
@@ -524,8 +549,11 @@ export default function StoryViewerScreen() {
             </Pressable>
             <View style={styles.replyInputShell}>
               <TextInput
+                ref={replyInputRef}
                 value={replyText}
                 onChangeText={setReplyText}
+                onFocus={() => setIsReplyFocused(true)}
+                onBlur={() => setIsReplyFocused(false)}
                 placeholder={`Reply to ${currentStory.author.username}`}
                 placeholderTextColor="rgba(255,255,255,0.5)"
                 style={styles.replyInput}
@@ -541,8 +569,8 @@ export default function StoryViewerScreen() {
       </LinearGradient>
 
       <View style={styles.tapZones}>
-        <Pressable style={styles.tapLeft} onPress={handleTapLeft} onPressIn={handlePressIn} onPressOut={handlePressOut} />
-        <Pressable style={styles.tapRight} onPress={handleTapRight} onPressIn={handlePressIn} onPressOut={handlePressOut} />
+        <Pressable style={styles.tapLeft} onPress={handleTapLeft} onPressIn={handlePressIn} onPressOut={handlePressOut} disabled={isReplyFocused} />
+        <Pressable style={styles.tapRight} onPress={handleTapRight} onPressIn={handlePressIn} onPressOut={handlePressOut} disabled={isReplyFocused} />
       </View>
 
       <ShareSheet

@@ -45,6 +45,9 @@ type VideoAsset = {
 
 const MAX_CAPTION = 2200;
 const MAX_REEL_DURATION = 90_000; // 90 seconds
+const REEL_PICKER_QUALITY = 0.62;
+const IOS_VIDEO_MEDIUM_QUALITY = (ImagePicker as any).UIImagePickerControllerQualityType?.Medium;
+const IOS_VIDEO_MEDIUM_PRESET = (ImagePicker as any).VideoExportPreset?.MediumQuality;
 
 function extractHashtags(text: string): string[] {
   return Array.from(new Set(Array.from(text.matchAll(/#([\p{L}0-9_]+)/gu)).map((m) => m[1])));
@@ -78,9 +81,11 @@ export default function CreateReelScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       allowsMultipleSelection: false,
-      quality: 0.85,
+      quality: REEL_PICKER_QUALITY,
       videoMaxDuration: 90,
       exif: false,
+      ...(IOS_VIDEO_MEDIUM_QUALITY ? { videoQuality: IOS_VIDEO_MEDIUM_QUALITY } : {}),
+      ...(IOS_VIDEO_MEDIUM_PRESET ? { videoExportPreset: IOS_VIDEO_MEDIUM_PRESET } : {}),
     });
     if (result.canceled || !result.assets.length) return;
     const a = result.assets[0];
@@ -110,8 +115,9 @@ export default function CreateReelScreen() {
     }
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-      quality: 0.85,
+      quality: REEL_PICKER_QUALITY,
       videoMaxDuration: 90,
+      ...(IOS_VIDEO_MEDIUM_QUALITY ? { videoQuality: IOS_VIDEO_MEDIUM_QUALITY } : {}),
     });
     if (result.canceled || !result.assets.length) return;
     const a = result.assets[0];

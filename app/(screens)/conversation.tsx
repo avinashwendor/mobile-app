@@ -16,6 +16,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,6 +49,7 @@ export default function ConversationScreen() {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const listRef = useRef<FlatList>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
@@ -265,11 +267,35 @@ export default function ConversationScreen() {
     return 'Several people are typing…';
   }, [typingUsers]);
 
+  const keyboardOffset = useMemo(() => insets.top + 56, [insets.top]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = Keyboard.addListener(showEvent, (event: any) => {
+      const windowHeight = Dimensions.get('window').height;
+      const eventHeight = event?.endCoordinates?.height ?? 0;
+      const screenY = event?.endCoordinates?.screenY ?? windowHeight;
+      const derivedHeight = Math.max(0, windowHeight - screenY);
+      setKeyboardHeight(Math.max(eventHeight, derivedHeight));
+    });
+
+    const onHide = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, []);
+
   return (
     <KeyboardAvoidingView
       style={[styles.screen, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? keyboardOffset : 0}
     >
       {/* Header */}
       <View
@@ -325,7 +351,7 @@ export default function ConversationScreen() {
           {
             backgroundColor: colors.background,
             borderTopColor: colors.border,
-            paddingBottom: insets.bottom + Spacing.xs,
+            paddingBottom: Math.max(insets.bottom + Spacing.xs, keyboardHeight + Spacing.xs),
           },
         ]}
       >
