@@ -9,7 +9,7 @@ import Constants from 'expo-constants';
  * real devices on the same LAN without any manual IP changes.
  */
 
-const DEFAULT_DEV_PORT = 3000;
+const DEFAULT_DEV_PORT = 3001;
 
 const resolveDevHost = (): string => {
   const hostUri =
@@ -26,11 +26,8 @@ const resolveDevHost = (): string => {
 const host = resolveDevHost();
 
 /** Base URL for REST requests — mounts under `/api/v1` on the backend */
-export const API_BASE_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com/api/v1`;
-// export const API_BASE_URL = `http://${`192.168.0.228`}:${DEFAULT_DEV_PORT}/api/v1`;
-/** WebSocket endpoint served by the same HTTP server (Socket.IO) */
-// export const WS_URL = `http://${`192.168.0.228`}:${DEFAULT_DEV_PORT}`;
-export const WS_URL = `http://Insta-app-backend-env.eba-7c2tbppk.us-east-1.elasticbeanstalk.com`;
+export const API_BASE_URL = `http://${host}:${DEFAULT_DEV_PORT}/api/v1`;
+export const WS_URL = `http://${host}:${DEFAULT_DEV_PORT}`;
 
 export const NOTIFICATION_TYPES = {
   LIKE: 'like',

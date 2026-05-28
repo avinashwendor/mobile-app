@@ -12,6 +12,7 @@ import CommentsSheet from '../../../src/components/comments/CommentsSheet';
 import ShareSheet from '../../../src/components/ShareSheet';
 import * as postApi from '../../../src/api/post.api';
 import type { Post } from '../../../src/api/post.api';
+import { useAuthStore } from '../../../src/stores/authStore';
 
 export default function PostDetailScreen() {
   const params = useLocalSearchParams<{ id: string; openComments?: string | string[]; commentId?: string | string[] }>();
@@ -21,6 +22,7 @@ export default function PostDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const currentUser = useAuthStore((s) => s.user);
 
   const [post, setPost] = useState<Post | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -46,6 +48,16 @@ export default function PostDetailScreen() {
       setIsCommentsOpen(true);
     }
   }, [openCommentsParam]);
+
+  /** Caption/settings edited — update local state so the card re-renders immediately */
+  const handlePostUpdated = (updatedPost: Post) => {
+    setPost(updatedPost);
+  };
+
+  /** Post deleted — go back */
+  const handlePostDeleted = (_postId: string) => {
+    router.back();
+  };
 
   if (isLoading) {
     return (
@@ -77,10 +89,13 @@ export default function PostDetailScreen() {
       <ScrollView showsVerticalScrollIndicator={false}>
         <PostCard
           post={post}
+          currentUserId={currentUser?._id}
           onComment={(_postId) => setIsCommentsOpen(true)}
           onShare={() => setIsShareOpen(true)}
           onUserPress={(uname) => router.push({ pathname: '/(screens)/user/[id]', params: { id: uname } })}
           onPostPress={() => {}}
+          onPostUpdated={handlePostUpdated}
+          onPostDeleted={handlePostDeleted}
         />
       </ScrollView>
 

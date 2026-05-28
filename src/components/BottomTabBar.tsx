@@ -26,7 +26,7 @@ const TABS: TabConfig[] = [
   { name: 'profile', icon: 'person-outline', activeIcon: 'person' },
 ];
 
-const TAB_BAR_HEIGHT = 50;
+const TAB_BAR_HEIGHT = 56;
 
 function TabButton({
   tab,
@@ -47,7 +47,7 @@ function TabButton({
   const handlePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     scale.value = withSequence(
-      withSpring(0.85, { damping: 15, stiffness: 400 }),
+      withSpring(0.82, { damping: 15, stiffness: 400 }),
       withSpring(1, { damping: 12, stiffness: 300 }),
     );
     onPress();
@@ -59,9 +59,11 @@ function TabButton({
         <Animated.View style={animStyle}>
           <LinearGradient
             colors={[...Colors.gradientPrimary]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
             style={styles.centerBtn}
           >
-            <Ionicons name="add" size={28} color={Colors.white} />
+            <Ionicons name="add" size={30} color={Colors.white} />
           </LinearGradient>
         </Animated.View>
       </Pressable>
@@ -76,22 +78,37 @@ function TabButton({
           size={26}
           color={isActive ? colors.text : colors.textTertiary}
         />
+        {/* Active dot indicator */}
+        {isActive && (
+          <View style={styles.activeDot} />
+        )}
       </Animated.View>
     </Pressable>
   );
 }
 
 /**
- * Instagram-style bottom tab bar — flush to bottom with safe area,
- * no floating / absolute overlay so content scrolls naturally above it.
+ * Instagram-style bottom tab bar — properly handles safe area on both
+ * iOS and Android so icons never clip below the screen.
  */
 export default function BottomTabBar(props: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const bottomPadding = Platform.OS === 'ios' ? insets.bottom : Spacing.sm;
+
+  // On Android, always respect bottom inset (navigation bar), with a minimum of 8px
+  const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 8 : insets.bottom);
 
   return (
-    <View style={[styles.wrapper, { backgroundColor: isDark ? '#0A0A0F' : '#FFFFFF', borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', paddingBottom: bottomPadding }]}>
+    <View
+      style={[
+        styles.wrapper,
+        {
+          backgroundColor: isDark ? '#0A0A0F' : '#FFFFFF',
+          borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+          paddingBottom: bottomPadding,
+        },
+      ]}
+    >
       <View style={styles.bar}>
         {TABS.map((tab) => {
           const routeIndex = props.state.routes.findIndex((r) => r.name === tab.name);
@@ -130,6 +147,13 @@ const styles = StyleSheet.create({
   tabBtnInner: {
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.primary,
   },
   centerBtnWrapper: {
     flex: 1,
@@ -138,15 +162,15 @@ const styles = StyleSheet.create({
     height: TAB_BAR_HEIGHT,
   },
   centerBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    elevation: 8,
   },
 });

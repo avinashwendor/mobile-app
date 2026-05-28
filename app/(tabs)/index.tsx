@@ -34,6 +34,15 @@ export default function HomeFeedScreen() {
   const unreadDms = useChatStore((s) => s.unreadDmCount);
 
   const [posts, setPosts] = useState<Post[]>([]);
+
+  const handlePostUpdated = useCallback((updatedPost: Post) => {
+    setPosts((prev) => prev.map((p) => p._id === updatedPost._id ? updatedPost : p));
+  }, []);
+
+  const handlePostDeleted = useCallback((postId: string) => {
+    setPosts((prev) => prev.filter((p) => p._id !== postId));
+  }, []);
+
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [myStoryGroup, setMyStoryGroup] = useState<StoryGroup | null>(null);
   const [recommendedUsers, setRecommendedUsers] = useState<UserSearchResult[]>([]);
@@ -182,12 +191,15 @@ export default function HomeFeedScreen() {
       post={item}
       initialIsLiked={item.isLiked}
       initialIsSaved={item.isSaved}
+      currentUserId={user?._id}
       onComment={(id) => router.push({ pathname: '/(screens)/post/[id]', params: { id, openComments: '1' } })}
       onShare={(id) => setSharePostId(id)}
       onUserPress={(username) => router.push({ pathname: '/(screens)/user/[id]', params: { id: username } })}
       onPostPress={(id) => router.push({ pathname: '/(screens)/post/[id]', params: { id } })}
+      onPostUpdated={handlePostUpdated}
+      onPostDeleted={handlePostDeleted}
     />
-  ), [router]);
+  ), [router, user?._id, handlePostUpdated, handlePostDeleted]);
 
   const handleFollowRecommendation = useCallback(async (targetUserId: string) => {
     if (pendingRecommendationIds.includes(targetUserId)) {
