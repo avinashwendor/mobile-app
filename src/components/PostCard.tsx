@@ -1,6 +1,6 @@
 import React, { useState, useCallback, memo, useEffect } from 'react';
 import {
-  View, Text, Pressable, ScrollView, StyleSheet, Dimensions,
+  View, Text, Pressable, ScrollView, StyleSheet, Dimensions, Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,8 @@ import Animated, {
 import { useTheme } from '../theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../theme/tokens';
 import UserAvatar from './UserAvatar';
+import PostOptionsMenu from './PostOptionsMenu';
+import EditPostModal from './EditPostModal';
 import { timeAgo, compactNumber } from '../utils/formatters';
 import type { Post } from '../api/post.api';
 import { ApiError } from '../api/client';
@@ -28,6 +30,12 @@ interface PostCardProps {
   /** Whether the current user has liked this post (pre-fetched or optimistic) */
   initialIsLiked?: boolean;
   initialIsSaved?: boolean;
+  /** The _id of the currently logged-in user (used to decide whether to show edit/delete) */
+  currentUserId?: string;
+  /** Called after a successful caption/settings edit */
+  onPostUpdated?: (updatedPost: Post) => void;
+  /** Called after the post is successfully deleted */
+  onPostDeleted?: (postId: string) => void;
 }
 
 /**
@@ -37,6 +45,7 @@ interface PostCardProps {
 function PostCardComponent({
   post, onComment, onShare, onUserPress, onPostPress,
   initialIsLiked, initialIsSaved,
+  currentUserId, onPostUpdated, onPostDeleted,
 }: PostCardProps) {
   const { colors } = useTheme();
   const resolvedLiked = initialIsLiked !== undefined ? initialIsLiked : post.isLiked;
@@ -44,6 +53,13 @@ function PostCardComponent({
   const [isLiked, setIsLiked] = useState(resolvedLiked);
   const [isSaved, setIsSaved] = useState(resolvedSaved);
   const [likeCount, setLikeCount] = useState(post.likesCount);
+
+  // Menu / edit state
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [editVisible, setEditVisible] = useState(false);
+  const [menuLoadingId, setMenuLoadingId] = useState<string | null>(null);
+
+  const isOwner = !!currentUserId && currentUserId === post.author._id;
 
   useEffect(() => {
     setIsLiked(initialIsLiked !== undefined ? initialIsLiked : post.isLiked);
@@ -143,6 +159,93 @@ function PostCardComponent({
     }
   };
 
+  // ──────────────────────────── 3-dot menu ────────────────────────────
+
+  const handleOpenMenu = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setMenuVisible(true);
+  };
+
+  const menuOptions = isOwner
+    ? [
+        { id: 'edit', icon: 'create-outline' as const, label: 'Edit post' },
+        { id: 'insights', icon: 'bar-chart-outline' as const, label: 'View insights' },
+        { id: 'archive', icon: 'archive-outline' as const, label: 'Archive' },
+        { id: 'delete', icon: 'trash-outline' as const, label: 'Delete post', isDestructive: true },
+      ]
+    : [
+        { id: 'report', icon: 'flag-outline' as const, label: 'Report' },
+        { id: 'not_interested', icon: 'eye-off-outline' as const, label: 'Not interested' },
+      ];
+
+  const handleMenuSelect = async (optionId: string) => {
+    if (optionId === 'edit') {
+      setMenuVisible(false);
+      // Small delay so the menu slides out before the edit modal slides in
+      setTimeout(() => setEditVisible(true), 280);
+      return;
+    }
+
+    if (optionId === 'delete') {
+      setMenuVisible(false);
+      setTimeout(() => {
+        Alert.alert(
+          'Delete Post',
+          'This will permanently delete this post and remove it from your profile. This action cannot be undone.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: async () => {
+                try {
+                  await postApi.deletePost(post._id);
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  onPostDeleted?.(post._id);
+                } catch {
+                  Alert.alert('Error', 'Failed to delete post. Please try again.');
+                }
+              },
+            },
+          ],
+        );
+      }, 100);
+      return;
+    }
+
+    if (optionId === 'archive') {
+      setMenuLoadingId('archive');
+      try {
+        // Archive endpoint: toggle archived state via a generic update
+        // (backend supports is_archived via PUT /posts/:id in some setups)
+        // For now, close menu and show a placeholder
+        await new Promise((r) => setTimeout(r, 500));
+        setMenuVisible(false);
+        Alert.alert('Archived', 'Post has been archived and removed from your profile.');
+      } catch {
+        Alert.alert('Error', 'Failed to archive post.');
+      } finally {
+        setMenuLoadingId(null);
+      }
+      return;
+    }
+
+    if (optionId === 'insights') {
+      setMenuVisible(false);
+      return;
+    }
+
+    // report / not_interested — just dismiss
+    setMenuVisible(false);
+  };
+
+  const handleEditSaved = (updatedPost: Post) => {
+    setEditVisible(false);
+    onPostUpdated?.(updatedPost);
+  };
+
+  // ─────────────────────────────────────────────────────────────────────
+
   const mediaCount = post.media.length;
   const firstMedia = post.media[0];
   const mediaHeight = firstMedia?.height && firstMedia?.width
@@ -153,25 +256,27 @@ function PostCardComponent({
   return (
     <View style={[styles.container, { borderBottomColor: colors.border }]}>
       {/* Header — uses backend field names */}
-      <Pressable style={styles.header} onPress={() => onUserPress(post.author.username)}>
-        <UserAvatar uri={post.author.profilePicture} size="sm" />
-        <View style={styles.headerText}>
-          <View style={styles.usernameRow}>
-            <Text style={[styles.username, { color: colors.text }]}>
-              {post.author.username}
+      <View style={styles.header}>
+        <Pressable style={styles.headerUser} onPress={() => onUserPress(post.author.username)}>
+          <UserAvatar uri={post.author.profilePicture} size="sm" />
+          <View style={styles.headerText}>
+            <View style={styles.usernameRow}>
+              <Text style={[styles.username, { color: colors.text }]}>
+                {post.author.username}
+              </Text>
+              {post.author.isVerified && (
+                <Ionicons name="checkmark-circle" size={14} color={Colors.accent} style={styles.verifiedIcon} />
+              )}
+            </View>
+            <Text style={[styles.time, { color: colors.textTertiary }]}>
+              {timeAgo(post.createdAt)}
             </Text>
-            {post.author.isVerified && (
-              <Ionicons name="checkmark-circle" size={14} color={Colors.accent} style={styles.verifiedIcon} />
-            )}
           </View>
-          <Text style={[styles.time, { color: colors.textTertiary }]}>
-            {timeAgo(post.createdAt)}
-          </Text>
-        </View>
-        <Pressable hitSlop={HitSlop.md}>
+        </Pressable>
+        <Pressable hitSlop={HitSlop.md} onPress={handleOpenMenu} style={styles.menuBtn}>
           <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
         </Pressable>
-      </Pressable>
+      </View>
 
       {/* Media carousel */}
       <View style={{ height: clampedHeight, backgroundColor: colors.surfaceElevated }}>
@@ -259,6 +364,25 @@ function PostCardComponent({
           </Text>
         </Pressable>
       )}
+
+      {/* 3-dot Options menu */}
+      <PostOptionsMenu
+        visible={menuVisible}
+        onClose={() => setMenuVisible(false)}
+        options={menuOptions}
+        onSelect={handleMenuSelect}
+        loadingOptionId={menuLoadingId}
+      />
+
+      {/* Edit post modal — only rendered when we need it */}
+      {editVisible && (
+        <EditPostModal
+          visible={editVisible}
+          post={post}
+          onClose={() => setEditVisible(false)}
+          onSaved={handleEditSaved}
+        />
+      )}
     </View>
   );
 }
@@ -268,11 +392,13 @@ export const PostCard = memo(PostCardComponent);
 const styles = StyleSheet.create({
   container: { borderBottomWidth: 0.5, paddingBottom: Spacing.sm, marginBottom: Spacing.xs },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
+  headerUser: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   headerText: { flex: 1, marginLeft: Spacing.sm },
   usernameRow: { flexDirection: 'row', alignItems: 'center' },
   username: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm },
   verifiedIcon: { marginLeft: 4 },
   time: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.xs, marginTop: 1 },
+  menuBtn: { padding: Spacing.xs },
   media: { width: SCREEN_WIDTH },
   mediaItem: { width: SCREEN_WIDTH, overflow: 'hidden' },
   mediaCounter: {

@@ -131,14 +131,33 @@ export async function getUserProfile(usernameOrId: string): Promise<UserProfile>
   };
 }
 
-/** Empty stub — backend does not expose /users/:id/posts yet. */
+/** GET /posts/user/:userId — public posts of another user (respects privacy on server side) */
 export async function getUserPosts(
-  _usernameOrId: string,
-  _page = 1,
-  _limit = 12,
+  usernameOrId: string,
+  page = 1,
+  limit = 18,
 ): Promise<{ posts: MobilePost[]; hasMore: boolean }> {
-  return { posts: [], hasMore: false };
+  const id = await resolveUserId(usernameOrId);
+  // Use the cursor stored per-user to support infinite scroll
+  const cursorKey = `user-posts-${id}`;
+  const storedCursor = page === 1 ? undefined : _userPostsCursors.get(cursorKey);
+
+  const { data } = await apiClient.get(`/posts/user/${id}`, {
+    params: { cursor: storedCursor, limit },
+  });
+
+  const items: any[] = Array.isArray(data.data) ? data.data : data.data?.items ?? [];
+  const nextCursor = data.meta?.cursor ?? null;
+  _userPostsCursors.set(cursorKey, nextCursor);
+
+  return {
+    posts: items.map(mapPost),
+    hasMore: Boolean(data.meta?.has_more),
+  };
 }
+
+/** In-memory cursor map so each user's profile can paginate independently. */
+const _userPostsCursors = new Map<string, string | null>();
 
 /** Current user's profile media buckets for the profile dashboard tabs. */
 export async function getMyProfileMedia(limit = 60): Promise<MyProfileMedia> {

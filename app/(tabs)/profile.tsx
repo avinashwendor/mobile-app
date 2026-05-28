@@ -20,9 +20,9 @@ import type { MobilePost, MobileReel } from '../../src/api/adapters';
 import { compactNumber } from '../../src/utils/formatters';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const GRID_GAP = 1;
+const GRID_GAP = 1.5;
 const GRID_COL = 3;
-const TILE_SIZE = (SCREEN_WIDTH - GRID_GAP * (GRID_COL - 1)) / GRID_COL;
+const TILE_SIZE = Math.floor((SCREEN_WIDTH - GRID_GAP * (GRID_COL - 1)) / GRID_COL);
 
 type ProfileTab = 'all' | 'reels' | 'network';
 type GridItemSource = 'owner' | 'collab' | 'tagged';
@@ -331,20 +331,26 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Tab bar */}
+      {/* Tab bar — Instagram style: icon-only with bottom line indicator */}
       <View style={[styles.tabBar, { borderBottomColor: colors.border }]}>
-        <Pressable style={[styles.tab, activeTab === 'all' && styles.tabActive]} onPress={() => setActiveTab('all')}>
-          <Ionicons name="grid-outline" size={20} color={activeTab === 'all' ? colors.text : colors.textTertiary} />
-          <Text style={[styles.tabLabel, { color: activeTab === 'all' ? colors.text : colors.textTertiary }]}>All</Text>
-        </Pressable>
-        <Pressable style={[styles.tab, activeTab === 'reels' && styles.tabActive]} onPress={() => setActiveTab('reels')}>
-          <Ionicons name="film-outline" size={20} color={activeTab === 'reels' ? colors.text : colors.textTertiary} />
-          <Text style={[styles.tabLabel, { color: activeTab === 'reels' ? colors.text : colors.textTertiary }]}>Reels</Text>
-        </Pressable>
-        <Pressable style={[styles.tab, activeTab === 'network' && styles.tabActive]} onPress={() => setActiveTab('network')}>
-          <Ionicons name="people-outline" size={20} color={activeTab === 'network' ? colors.text : colors.textTertiary} />
-          <Text style={[styles.tabLabel, { color: activeTab === 'network' ? colors.text : colors.textTertiary }]}>Tagged</Text>
-        </Pressable>
+        {(['all', 'reels', 'network'] as const).map((tab) => {
+          const iconMap = { all: 'grid-outline', reels: 'film-outline', network: 'person-add-outline' } as const;
+          const activeIconMap = { all: 'grid', reels: 'film', network: 'person-add' } as const;
+          const isActive = activeTab === tab;
+          return (
+            <Pressable
+              key={tab}
+              style={[styles.tab, isActive && styles.tabActive]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Ionicons
+                name={isActive ? activeIconMap[tab] : iconMap[tab]}
+                size={22}
+                color={isActive ? colors.text : colors.textTertiary}
+              />
+            </Pressable>
+          );
+        })}
       </View>
 
       {/* Post grid */}
@@ -367,11 +373,16 @@ export default function ProfileScreen() {
         ) : (
           <View style={styles.gridContainer}>
             {currentItems.map((item, index) => {
-              const isLastInRow = (index + 1) % GRID_COL === 0;
+              const col = index % GRID_COL;
+              const hasRightGap = col < GRID_COL - 1;
               return (
                 <Pressable
                   key={item.key}
-                  style={[styles.gridItem, !isLastInRow && { marginRight: GRID_GAP }]}
+                  style={[
+                    styles.gridItem,
+                    hasRightGap && { marginRight: GRID_GAP },
+                    { marginBottom: GRID_GAP },
+                  ]}
                   onPress={() => {
                     if (item.kind === 'post') {
                       router.push({ pathname: '/(screens)/post/[id]', params: { id: item.id } });
@@ -387,20 +398,21 @@ export default function ProfileScreen() {
                     transition={200}
                     cachePolicy="memory-disk"
                   />
+                  {/* Reel overlay: play icon top-right like Instagram */}
                   {item.kind === 'reel' ? (
-                    <View style={styles.reelPlayOverlay}>
-                      <View style={styles.reelPlayBtn}>
-                        <Ionicons name="play" size={18} color={Colors.white} />
-                      </View>
+                    <View style={styles.reelBadge}>
+                      <Ionicons name="play" size={14} color={Colors.white} />
                     </View>
                   ) : null}
-                  {item.hasMultipleMedia ? (
-                    <View style={[styles.gridBadge, styles.gridBadgeRight]}>
-                      <Ionicons name="copy-outline" size={12} color={Colors.white} />
+                  {/* Multi-media indicator top-right */}
+                  {item.hasMultipleMedia && item.kind !== 'reel' ? (
+                    <View style={styles.multiBadge}>
+                      <Ionicons name="copy-outline" size={13} color={Colors.white} />
                     </View>
                   ) : null}
+                  {/* Tagged/collab badge bottom-left */}
                   {item.source !== 'owner' ? (
-                    <View style={[styles.gridBadge, styles.gridBadgeBottom]}>
+                    <View style={styles.sourceBadge}>
                       <Ionicons
                         name={item.source === 'tagged' ? 'at-outline' : 'people-outline'}
                         size={12}
@@ -440,34 +452,39 @@ const styles = StyleSheet.create({
   fullName: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.base },
   bio: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.sm, marginTop: 4, lineHeight: 20 },
   linksWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs, marginTop: Spacing.sm },
-  linkChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: Radii.pill, paddingHorizontal: Spacing.sm, paddingVertical: 6, maxWidth: '100%' },
+  linkChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: Radii.full, paddingHorizontal: Spacing.sm, paddingVertical: 6, maxWidth: '100%' },
   linkChipText: { flexShrink: 1, fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.xs },
   actionRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
   actionBtn: { flex: 1, paddingVertical: Spacing.sm, borderRadius: Radii.sm, alignItems: 'center', borderWidth: 1 },
   actionBtnText: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.sm },
   tabBar: { flexDirection: 'row', borderBottomWidth: 0.5 },
-  tab: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: Spacing.md, borderBottomWidth: 2, borderBottomColor: 'transparent' },
-  tabActive: { borderBottomColor: Colors.primary },
-  tabLabel: { fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.xs },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1.5, borderBottomColor: 'transparent' },
+  tabActive: { borderBottomColor: Colors.white },
   grid: { flex: 1 },
   gridContainer: { flexDirection: 'row', flexWrap: 'wrap' },
-  gridItem: { width: TILE_SIZE, height: TILE_SIZE, marginBottom: GRID_GAP },
+  gridItem: { width: TILE_SIZE, height: TILE_SIZE, overflow: 'hidden', backgroundColor: '#111' },
   gridImage: { width: '100%', height: '100%' },
-  gridBadge: { position: 'absolute', backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999, padding: 4 },
-  gridBadgeLeft: { top: 4, left: 4 },
-  gridBadgeRight: { top: 4, right: 4 },
-  gridBadgeBottom: { bottom: 4, right: 4 },
-  reelPlayOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
+  // Reel play icon — top right like Instagram
+  reelBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.0)',
   },
-  reelPlayBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'center', alignItems: 'center',
-    // shift slightly right so the play icon looks visually centered
-    paddingLeft: 3,
+  // Multi-image icon — top right
+  multiBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+  },
+  // Source badge — bottom left
+  sourceBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 99,
+    padding: 3,
   },
   emptyGrid: { alignItems: 'center', paddingTop: 60, gap: Spacing.md },
   emptyText: { fontFamily: Typography.fontFamily.regular, fontSize: Typography.size.base },
