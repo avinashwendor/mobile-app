@@ -1,12 +1,15 @@
 import React, { useRef, useEffect } from 'react';
 import {
   View, Text, Pressable, StyleSheet, Modal,
-  Animated, TouchableWithoutFeedback, Alert, ActivityIndicator,
+  Animated, TouchableWithoutFeedback, ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii } from '../theme/tokens';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export interface PostMenuOption {
   id: string;
@@ -33,7 +36,8 @@ export default function PostOptionsMenu({
   loadingOptionId,
 }: PostOptionsMenuProps) {
   const { colors } = useTheme();
-  const slideAnim = useRef(new Animated.Value(300)).current;
+  // Start off-screen at the bottom
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -54,13 +58,13 @@ export default function PostOptionsMenu({
     } else {
       Animated.parallel([
         Animated.timing(slideAnim, {
-          toValue: 300,
-          duration: 180,
+          toValue: SCREEN_HEIGHT,
+          duration: 200,
           useNativeDriver: true,
         }),
         Animated.timing(backdropOpacity, {
           toValue: 0,
-          duration: 180,
+          duration: 200,
           useNativeDriver: true,
         }),
       ]).start();
@@ -81,29 +85,30 @@ export default function PostOptionsMenu({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.modalContainer}>
-        {/* Backdrop */}
+      {/* Full-screen container */}
+      <View style={styles.modalRoot}>
+        {/* Backdrop — tap to dismiss */}
         <TouchableWithoutFeedback onPress={onClose}>
           <Animated.View
-            style={[
-              styles.backdrop,
-              { opacity: backdropOpacity },
-            ]}
+            style={[styles.backdrop, { opacity: backdropOpacity }]}
           />
         </TouchableWithoutFeedback>
 
-        {/* Bottom sheet */}
+        {/* Bottom sheet — pinned to bottom via absolute positioning */}
         <Animated.View
           style={[
             styles.sheet,
-            { backgroundColor: colors.surfaceElevated, transform: [{ translateY: slideAnim }] },
+            {
+              backgroundColor: colors.surfaceElevated,
+              transform: [{ translateY: slideAnim }],
+            },
           ]}
         >
           {/* Handle bar */}
           <View style={[styles.handleBar, { backgroundColor: colors.border }]} />
 
           {/* Options */}
-          <View style={styles.optionsContainer}>
+          <View style={[styles.optionsContainer, { backgroundColor: colors.surface }]}>
             {options.map((option, index) => {
               const isLast = index === options.length - 1;
               const isLoading = loadingOptionId === option.id;
@@ -117,12 +122,21 @@ export default function PostOptionsMenu({
                   style={({ pressed }) => [
                     styles.optionRow,
                     !isLast && [styles.optionBorder, { borderBottomColor: colors.border }],
-                    pressed && { backgroundColor: colors.surfaceElevated + '88' },
+                    { backgroundColor: pressed ? colors.border + '55' : 'transparent' },
                   ]}
                   onPress={() => handleSelect(option.id)}
                   disabled={!!loadingOptionId}
                 >
-                  <View style={[styles.optionIconWrapper, { backgroundColor: option.isDestructive ? Colors.error + '18' : colors.border + '60' }]}>
+                  <View
+                    style={[
+                      styles.optionIconWrapper,
+                      {
+                        backgroundColor: option.isDestructive
+                          ? Colors.error + '18'
+                          : colors.border + '70',
+                      },
+                    ]}
+                  >
                     {isLoading ? (
                       <ActivityIndicator size="small" color={optionColor} />
                     ) : (
@@ -144,7 +158,7 @@ export default function PostOptionsMenu({
           <Pressable
             style={({ pressed }) => [
               styles.cancelBtn,
-              { backgroundColor: colors.border + '80' },
+              { backgroundColor: colors.surface },
               pressed && { opacity: 0.7 },
             ]}
             onPress={onClose}
@@ -159,20 +173,29 @@ export default function PostOptionsMenu({
 }
 
 const styles = StyleSheet.create({
-  modalContainer: {
+  modalRoot: {
     flex: 1,
-    justifyContent: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.65)',
   },
   sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderTopLeftRadius: Radii.xl,
     borderTopRightRadius: Radii.xl,
-    paddingBottom: 34, // safe area bottom padding
+    paddingBottom: 36,
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.sm,
+    // Shadow for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 20,
   },
   handleBar: {
     width: 40,
