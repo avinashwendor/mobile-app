@@ -161,20 +161,58 @@ const _userPostsCursors = new Map<string, string | null>();
 
 /** Current user's profile media buckets for the profile dashboard tabs. */
 export async function getMyProfileMedia(limit = 60): Promise<MyProfileMedia> {
-  const { data } = await apiClient.get('/users/me/profile-media', {
-    params: { limit },
-  });
-  const raw = data?.data ?? {};
+  try {
+    // Primary: dedicated endpoint that returns all buckets in one shot
+    const { data } = await apiClient.get('/users/me/profile-media', {
+      params: { limit },
+    });
+    const raw = data?.data ?? {};
 
-  return {
-    ownPosts: Array.isArray(raw.own_posts) ? raw.own_posts.map(mapPost) : [],
-    ownReels: Array.isArray(raw.own_reels) ? raw.own_reels.map(mapReel) : [],
-    collaboratedPosts: Array.isArray(raw.collaborated_posts) ? raw.collaborated_posts.map(mapPost) : [],
-    collaboratedReels: Array.isArray(raw.collaborated_reels) ? raw.collaborated_reels.map(mapReel) : [],
-    taggedPosts: Array.isArray(raw.tagged_posts) ? raw.tagged_posts.map(mapPost) : [],
-    taggedReels: Array.isArray(raw.tagged_reels) ? raw.tagged_reels.map(mapReel) : [],
-  };
+    return {
+      ownPosts: Array.isArray(raw.own_posts) ? raw.own_posts.map(mapPost) : [],
+      ownReels: Array.isArray(raw.own_reels) ? raw.own_reels.map(mapReel) : [],
+      collaboratedPosts: Array.isArray(raw.collaborated_posts) ? raw.collaborated_posts.map(mapPost) : [],
+      collaboratedReels: Array.isArray(raw.collaborated_reels) ? raw.collaborated_reels.map(mapReel) : [],
+      taggedPosts: Array.isArray(raw.tagged_posts) ? raw.tagged_posts.map(mapPost) : [],
+      taggedReels: Array.isArray(raw.tagged_reels) ? raw.tagged_reels.map(mapReel) : [],
+    };
+  } catch (primaryErr: any) {
+    // Fallback: fetch just own posts via the always-present /posts/user/:id route
+    // This keeps the profile grid working even if the new endpoint isn't live yet.
+    try {
+      const meRes = await apiClient.get('/users/me');
+      const userId = meRes.data?.data?._id ?? meRes.data?.data?.id ?? '';
+      if (!userId) throw new Error('No user id');
+
+      const { data: postsData } = await apiClient.get(`/posts/user/${userId}`, {
+        params: { limit },
+      });
+      const items: any[] = Array.isArray(postsData.data)
+        ? postsData.data
+        : postsData.data?.items ?? [];
+
+      return {
+        ownPosts: items.map(mapPost),
+        ownReels: [],
+        collaboratedPosts: [],
+        collaboratedReels: [],
+        taggedPosts: [],
+        taggedReels: [],
+      };
+    } catch {
+      // If both fail, return empty — profile still renders without media
+      return {
+        ownPosts: [],
+        ownReels: [],
+        collaboratedPosts: [],
+        collaboratedReels: [],
+        taggedPosts: [],
+        taggedReels: [],
+      };
+    }
+  }
 }
+
 
 export async function getUserFollowers(
   usernameOrId: string,
