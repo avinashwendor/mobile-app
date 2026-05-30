@@ -17,7 +17,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeInDown,
+  FadeIn,
+  FadeOut,
+  SlideInDown,
+  SlideOutDown,
+  ZoomIn,
+} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../../src/theme/ThemeProvider';
 import { Colors, Typography, Spacing, Radii, HitSlop } from '../../../src/theme/tokens';
@@ -26,6 +33,83 @@ import * as serverApi from '../../../src/api/server.api';
 import type { Server } from '../../../src/api/server.api';
 
 type TabType = 'mine' | 'discover';
+
+// ─── Animated Success Overlay ─────────────────────────────────────────────────
+
+function JoinSuccessOverlay({
+  server,
+  visible,
+  onNavigate,
+}: {
+  server: Server | null;
+  visible: boolean;
+  onNavigate: () => void;
+}) {
+  const { colors } = useTheme();
+
+  useEffect(() => {
+    if (visible) {
+      // Auto-navigate after 1.6s
+      const timer = setTimeout(() => {
+        onNavigate();
+      }, 1600);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, onNavigate]);
+
+  if (!server || !visible) return null;
+
+  return (
+    <Animated.View
+      entering={FadeIn.duration(200)}
+      exiting={FadeOut.duration(200)}
+      style={StyleSheet.absoluteFillObject}
+      pointerEvents="none"
+    >
+      <LinearGradient
+        colors={['rgba(108,92,231,0.95)', 'rgba(162,155,254,0.95)']}
+        style={styles.successOverlay}
+      >
+        <Animated.View entering={ZoomIn.springify().damping(14)} style={styles.successContent}>
+          <View style={styles.successIconWrap}>
+            <LinearGradient
+              colors={['#fff', '#f0edff']}
+              style={styles.successIconGrad}
+            >
+              {server.iconUrl ? (
+                <Image
+                  source={{ uri: server.iconUrl }}
+                  style={{ width: 64, height: 64, borderRadius: 16 }}
+                  contentFit="cover"
+                />
+              ) : (
+                <Text style={styles.successIconLetter}>
+                  {(server.name[0] ?? '#').toUpperCase()}
+                </Text>
+              )}
+            </LinearGradient>
+          </View>
+
+          <Animated.View entering={FadeInDown.delay(150).springify()}>
+            <View style={styles.successCheckCircle}>
+              <Ionicons name="checkmark" size={20} color="#6C5CE7" />
+            </View>
+          </Animated.View>
+
+          <Animated.Text entering={FadeInDown.delay(250)} style={styles.successTitle}>
+            You joined!
+          </Animated.Text>
+          <Animated.Text entering={FadeInDown.delay(350)} style={styles.successServerName}>
+            {server.name}
+          </Animated.Text>
+          <Animated.Text entering={FadeInDown.delay(450)} style={styles.successSub}>
+            Taking you there now…
+          </Animated.Text>
+        </Animated.View>
+      </LinearGradient>
+    </Animated.View>
+  );
+}
 
 // ─── Server Card ─────────────────────────────────────────────────────────────
 
@@ -102,7 +186,7 @@ function ServerCard({
             </Text>
             {isOwner && tab === 'mine' && (
               <View style={styles.ownerBadge}>
-                <Ionicons name="crown" size={11} color={Colors.primary} />
+                <Ionicons name="ribbon" size={11} color={Colors.primary} />
                 <Text style={[styles.ownerBadgeText, { color: Colors.primary }]}>Owner</Text>
               </View>
             )}
@@ -172,41 +256,92 @@ function ServerCard({
   );
 }
 
-// ─── Join Confirmation Sheet ──────────────────────────────────────────────────
+// ─── Join Bottom Sheet ────────────────────────────────────────────────────────
 
-function JoinConfirmSheet({
+type JoinSheetPhase = 'preview' | 'joining' | 'done';
+
+function JoinBottomSheet({
   server,
   visible,
-  isJoining,
   onConfirm,
   onCancel,
 }: {
   server: Server | null;
   visible: boolean;
-  isJoining: boolean;
-  onConfirm: () => void;
+  onConfirm: () => Promise<void>;
   onCancel: () => void;
 }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const [phase, setPhase] = useState<JoinSheetPhase>('preview');
+
+  // Reset phase when sheet opens/closes
+  useEffect(() => {
+    if (visible) {
+      setPhase('preview');
+    }
+  }, [visible]);
+
+  const handleJoin = async () => {
+    setPhase('joining');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await onConfirm();
+    // onConfirm handles navigation — if we get here without error, just reset
+  };
 
   if (!server) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
-      <Pressable style={styles.sheetOverlay} onPress={onCancel}>
-        <Pressable
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={phase === 'preview' ? onCancel : undefined}
+      statusBarTranslucent
+    >
+      {/* Backdrop */}
+      <Animated.View
+        entering={FadeIn.duration(250)}
+        exiting={FadeOut.duration(200)}
+        style={styles.sheetBackdrop}
+      >
+        <Pressable style={StyleSheet.absoluteFillObject} onPress={phase === 'preview' ? onCancel : undefined} />
+
+        {/* Sheet */}
+        <Animated.View
+          entering={SlideInDown.springify().damping(20).stiffness(200)}
+          exiting={SlideOutDown.duration(280)}
           style={[
             styles.sheetContainer,
-            { backgroundColor: colors.surface, paddingBottom: insets.bottom + Spacing.base },
+            {
+              backgroundColor: colors.surface,
+              paddingBottom: insets.bottom + Spacing.lg,
+            },
           ]}
-          onPress={(e) => e.stopPropagation()}
         >
+          {/* Handle */}
           <View style={styles.sheetHandle} />
-          <View style={styles.sheetPreview}>
-            <View style={[styles.sheetIcon, { borderColor: colors.border }]}>
+
+          {/* Server banner */}
+          <View style={styles.sheetBanner}>
+            {server.bannerUrl ? (
+              <Image source={{ uri: server.bannerUrl }} style={styles.sheetBannerImg} contentFit="cover" />
+            ) : (
+              <LinearGradient
+                colors={[Colors.primary, Colors.primaryLight]}
+                style={styles.sheetBannerImg}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              />
+            )}
+            {/* Frosted icon overlay */}
+            <View style={[styles.sheetIconContainer, { borderColor: colors.surface }]}>
               {server.iconUrl ? (
-                <Image source={{ uri: server.iconUrl }} style={{ width: 56, height: 56 }} contentFit="cover" />
+                <Image
+                  source={{ uri: server.iconUrl }}
+                  style={{ width: 72, height: 72 }}
+                  contentFit="cover"
+                />
               ) : (
                 <LinearGradient
                   colors={[Colors.primary, Colors.coral]}
@@ -214,45 +349,117 @@ function JoinConfirmSheet({
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                 >
-                  <Text style={styles.sheetIconLetter}>{(server.name[0] ?? '#').toUpperCase()}</Text>
+                  <Text style={styles.sheetIconLetter}>
+                    {(server.name[0] ?? '#').toUpperCase()}
+                  </Text>
                 </LinearGradient>
               )}
             </View>
+          </View>
+
+          {/* Info */}
+          <View style={styles.sheetInfo}>
             <Text style={[styles.sheetTitle, { color: colors.text }]}>{server.name}</Text>
-            <Text style={[styles.sheetMeta, { color: colors.textSecondary }]}>
-              {server.memberCount.toLocaleString()} members
-              {server.categories.length > 0 ? ` · ${server.categories[0]}` : ''}
-            </Text>
+
+            {/* Meta pills */}
+            <View style={styles.sheetMetaRow}>
+              <View style={[styles.metaPill, { backgroundColor: Colors.primary + '18' }]}>
+                <Ionicons name="people" size={12} color={Colors.primary} />
+                <Text style={[styles.metaPillText, { color: Colors.primary }]}>
+                  {server.memberCount.toLocaleString()} members
+                </Text>
+              </View>
+              {server.categories.length > 0 && (
+                <View style={[styles.metaPill, { backgroundColor: colors.border }]}>
+                  <Ionicons name="pricetag" size={12} color={colors.textSecondary} />
+                  <Text style={[styles.metaPillText, { color: colors.textSecondary }]}>
+                    {server.categories[0]}
+                  </Text>
+                </View>
+              )}
+              {!server.isPublic && (
+                <View style={[styles.metaPill, { backgroundColor: Colors.amber + '20' }]}>
+                  <Ionicons name="lock-closed" size={12} color={Colors.amber} />
+                  <Text style={[styles.metaPillText, { color: Colors.amber }]}>Private</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Description */}
             {server.description ? (
-              <Text style={[styles.sheetDesc, { color: colors.textSecondary }]} numberOfLines={3}>
+              <Text
+                style={[styles.sheetDesc, { color: colors.textSecondary }]}
+                numberOfLines={3}
+              >
                 {server.description}
               </Text>
             ) : null}
+
+            {/* What you'll get */}
+            <View style={[styles.sheetFeatureBox, { backgroundColor: colors.border + '50', borderColor: colors.border }]}>
+              <View style={styles.sheetFeatureRow}>
+                <Ionicons name="chatbubbles" size={16} color={Colors.primary} />
+                <Text style={[styles.sheetFeatureText, { color: colors.text }]}>
+                  Access all public channels
+                </Text>
+              </View>
+              <View style={styles.sheetFeatureRow}>
+                <Ionicons name="people" size={16} color={Colors.emerald} />
+                <Text style={[styles.sheetFeatureText, { color: colors.text }]}>
+                  Connect with {server.memberCount.toLocaleString()} members
+                </Text>
+              </View>
+              <View style={styles.sheetFeatureRow}>
+                <Ionicons name="notifications" size={16} color={Colors.amber} />
+                <Text style={[styles.sheetFeatureText, { color: colors.text }]}>
+                  Get real-time notifications
+                </Text>
+              </View>
+            </View>
           </View>
-          <Pressable
-            onPress={onConfirm}
-            disabled={isJoining}
-            style={[styles.sheetJoinBtn, { opacity: isJoining ? 0.7 : 1 }]}
-          >
-            <LinearGradient
-              colors={[...Colors.gradientPrimary]}
-              style={styles.sheetJoinBtnGrad}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
+
+          {/* CTA */}
+          <View style={styles.sheetActions}>
+            <Pressable
+              onPress={phase === 'preview' ? handleJoin : undefined}
+              disabled={phase !== 'preview'}
+              style={[styles.sheetJoinBtn, { opacity: phase === 'preview' ? 1 : 0.8 }]}
             >
-              {isJoining
-                ? <ActivityIndicator color={Colors.white} />
-                : <Text style={styles.sheetJoinBtnText}>Join Server</Text>}
-            </LinearGradient>
-          </Pressable>
-          <Pressable onPress={onCancel} style={styles.sheetCancelBtn}>
-            <Text style={[styles.sheetCancelText, { color: colors.textSecondary }]}>Cancel</Text>
-          </Pressable>
-        </Pressable>
-      </Pressable>
+              <LinearGradient
+                colors={[...Colors.gradientPrimary]}
+                style={styles.sheetJoinBtnGrad}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                {phase === 'joining' ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <ActivityIndicator color={Colors.white} size="small" />
+                    <Text style={styles.sheetJoinBtnText}>Joining…</Text>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons name="enter-outline" size={20} color={Colors.white} />
+                    <Text style={styles.sheetJoinBtnText}>Join Server</Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </Pressable>
+
+            {phase === 'preview' && (
+              <Pressable onPress={onCancel} style={styles.sheetCancelBtn}>
+                <Text style={[styles.sheetCancelText, { color: colors.textSecondary }]}>
+                  Maybe later
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </Animated.View>
+      </Animated.View>
     </Modal>
   );
 }
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function ServersScreen() {
   const router = useRouter();
@@ -269,9 +476,14 @@ export default function ServersScreen() {
   const [isJoiningByCode, setIsJoiningByCode] = useState(false);
   const [showInviteInput, setShowInviteInput] = useState(false);
 
-  // Join confirmation
+  // Join sheet state
   const [joinTarget, setJoinTarget] = useState<Server | null>(null);
-  const [isJoining, setIsJoining] = useState(false);
+  const [showJoinSheet, setShowJoinSheet] = useState(false);
+
+  // Success overlay
+  const [successServer, setSuccessServer] = useState<Server | null>(null);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const pendingNavigationId = useRef<string | null>(null);
 
   // Refs — no stale closures on pagination
   const discoverCursorRef = useRef<string | null>(null);
@@ -372,21 +584,35 @@ export default function ServersScreen() {
     }
   }, [inviteCode, fetchMine, router]);
 
-  // ── Open join confirmation sheet ──────────────────────────────────────────
+  // ── Open join sheet ───────────────────────────────────────────────────────
 
   const handleRequestJoin = useCallback((server: Server) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setJoinTarget(server);
+    setShowJoinSheet(true);
   }, []);
 
-  // ── Confirm join ──────────────────────────────────────────────────────────
+  // ── Navigate to server (called from success overlay) ─────────────────────
+
+  const navigateToServer = useCallback(() => {
+    const id = pendingNavigationId.current;
+    setShowSuccess(false);
+    setSuccessServer(null);
+    pendingNavigationId.current = null;
+    if (id) {
+      router.push(`/(screens)/servers/${id}` as any);
+    }
+  }, [router]);
+
+  // ── Confirm join (called from sheet's onConfirm) ──────────────────────────
 
   const handleConfirmJoin = useCallback(async () => {
     if (!joinTarget) return;
-    setIsJoining(true);
     try {
       await serverApi.joinServer(joinTarget._id);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Update discover list optimistically
       setDiscoverList((prev) =>
         prev.map((s) =>
           s._id === joinTarget._id
@@ -394,17 +620,34 @@ export default function ServersScreen() {
             : s,
         ),
       );
-      await fetchMine();
-      const targetId = joinTarget._id;
+
+      // Refresh my servers in background
+      fetchMine().catch(() => {});
+
+      // Store navigation target
+      pendingNavigationId.current = joinTarget._id;
+      const serverForSuccess = { ...joinTarget };
+
+      // 1. Close the bottom sheet first
+      setShowJoinSheet(false);
       setJoinTarget(null);
-      router.push(`/(screens)/servers/${targetId}` as any);
+
+      // 2. After sheet closes, show success overlay which auto-navigates
+      setTimeout(() => {
+        setSuccessServer(serverForSuccess);
+        setShowSuccess(true);
+      }, 350);
     } catch (err: any) {
       Alert.alert('Error', err?.response?.data?.message ?? err?.message ?? 'Could not join server.');
+      setShowJoinSheet(false);
       setJoinTarget(null);
-    } finally {
-      setIsJoining(false);
     }
-  }, [joinTarget, fetchMine, router]);
+  }, [joinTarget, fetchMine]);
+
+  const handleCancelJoin = useCallback(() => {
+    setShowJoinSheet(false);
+    setTimeout(() => setJoinTarget(null), 350);
+  }, []);
 
   const currentData = activeTab === 'mine' ? myServers : discoverList;
 
@@ -545,12 +788,19 @@ export default function ServersScreen() {
         />
       )}
 
-      <JoinConfirmSheet
+      {/* Join Bottom Sheet */}
+      <JoinBottomSheet
         server={joinTarget}
-        visible={joinTarget !== null}
-        isJoining={isJoining}
+        visible={showJoinSheet}
         onConfirm={handleConfirmJoin}
-        onCancel={() => setJoinTarget(null)}
+        onCancel={handleCancelJoin}
+      />
+
+      {/* Join Success Overlay — renders above everything */}
+      <JoinSuccessOverlay
+        server={successServer}
+        visible={showSuccess}
+        onNavigate={navigateToServer}
       />
     </View>
   );
@@ -745,71 +995,119 @@ const styles = StyleSheet.create({
   createBtnGrad: { paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md, borderRadius: Radii.full },
   createBtnText: { color: Colors.white, fontFamily: Typography.fontFamily.semiBold, fontSize: Typography.size.base },
   footer: { paddingVertical: Spacing.base },
-  sheetOverlay: {
+
+  // ── Join Bottom Sheet ──────────────────────────────────────────────────────
+  sheetBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
   sheetContainer: {
     borderTopLeftRadius: Radii.xxl,
     borderTopRightRadius: Radii.xxl,
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.sm,
+    overflow: 'hidden',
   },
   sheetHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#88888888',
+    backgroundColor: '#88888866',
     alignSelf: 'center',
-    marginBottom: Spacing.base,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.sm,
   },
-  sheetPreview: { alignItems: 'center', paddingVertical: Spacing.base },
-  sheetIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: Radii.lg,
-    borderWidth: 2,
+  sheetBanner: {
+    height: 110,
+    position: 'relative',
+    marginBottom: 44,
+  },
+  sheetBannerImg: {
+    width: '100%',
+    height: 110,
+  },
+  sheetIconContainer: {
+    position: 'absolute',
+    bottom: -38,
+    left: '50%',
+    marginLeft: -40,
+    width: 80,
+    height: 80,
+    borderRadius: Radii.xl,
+    borderWidth: 4,
     overflow: 'hidden',
-    marginBottom: Spacing.md,
   },
   sheetIconGrad: {
-    width: 60,
-    height: 60,
+    width: 72,
+    height: 72,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sheetIconLetter: {
     color: Colors.white,
     fontFamily: Typography.fontFamily.bold,
-    fontSize: 26,
+    fontSize: 30,
+  },
+  sheetInfo: {
+    paddingHorizontal: Spacing.xl,
+    alignItems: 'center',
+    gap: Spacing.md,
   },
   sheetTitle: {
     fontFamily: Typography.fontFamily.bold,
-    fontSize: Typography.size.lg,
+    fontSize: Typography.size.xl,
     textAlign: 'center',
-    marginBottom: 4,
   },
-  sheetMeta: {
-    fontFamily: Typography.fontFamily.regular,
-    fontSize: Typography.size.sm,
-    textAlign: 'center',
-    marginBottom: Spacing.sm,
+  sheetMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    justifyContent: 'center',
+  },
+  metaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: Radii.full,
+  },
+  metaPillText: {
+    fontFamily: Typography.fontFamily.semiBold,
+    fontSize: Typography.size.xs,
   },
   sheetDesc: {
     fontFamily: Typography.fontFamily.regular,
-    fontSize: Typography.size.base,
+    fontSize: Typography.size.sm,
     textAlign: 'center',
-    lineHeight: 22,
-    marginTop: Spacing.xs,
+    lineHeight: 20,
+  },
+  sheetFeatureBox: {
+    width: '100%',
+    borderRadius: Radii.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  sheetFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  sheetFeatureText: {
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.size.sm,
+  },
+  sheetActions: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    gap: Spacing.sm,
   },
   sheetJoinBtn: {
     borderRadius: Radii.full,
     overflow: 'hidden',
-    marginTop: Spacing.lg,
   },
   sheetJoinBtnGrad: {
-    height: 50,
+    height: 54,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radii.full,
@@ -818,14 +1116,80 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontFamily: Typography.fontFamily.bold,
     fontSize: Typography.size.base,
+    letterSpacing: 0.3,
   },
   sheetCancelBtn: {
     alignItems: 'center',
     paddingVertical: Spacing.md,
-    marginTop: Spacing.xs,
   },
   sheetCancelText: {
-    fontFamily: Typography.fontFamily.semiBold,
+    fontFamily: Typography.fontFamily.medium,
     fontSize: Typography.size.base,
+  },
+
+  // ── Success Overlay ────────────────────────────────────────────────────────
+  successOverlay: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successContent: {
+    alignItems: 'center',
+    gap: Spacing.md,
+    paddingHorizontal: Spacing.xxl,
+  },
+  successIconWrap: {
+    width: 100,
+    height: 100,
+    borderRadius: 28,
+    overflow: 'hidden',
+    shadowColor: '#fff',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  successIconLetter: {
+    color: Colors.primary,
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: 36,
+  },
+  successIconGrad: {
+    width: 100,
+    height: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successCheckCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -18,
+    shadowColor: '#6C5CE7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  successTitle: {
+    color: Colors.white,
+    fontFamily: Typography.fontFamily.bold,
+    fontSize: Typography.size.xxl,
+    textAlign: 'center',
+  },
+  successServerName: {
+    color: 'rgba(255,255,255,0.9)',
+    fontFamily: Typography.fontFamily.semiBold,
+    fontSize: Typography.size.lg,
+    textAlign: 'center',
+  },
+  successSub: {
+    color: 'rgba(255,255,255,0.6)',
+    fontFamily: Typography.fontFamily.regular,
+    fontSize: Typography.size.sm,
+    textAlign: 'center',
   },
 });
